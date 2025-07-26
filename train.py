@@ -1,6 +1,12 @@
 import math
 import time
+import os
+# os.environ['TMPDIR'] = '/scratch'
+# os.environ['TORCH_SHARING_DIR'] = '/scratch'
 import torch
+# torch.multiprocessing.set_start_method("spawn", force=True)
+# torch.multiprocessing.set_sharing_strategy("file_system")   # prevents FD/resource_sharer issues
+
 import wandb
 import numpy
 import random
@@ -21,6 +27,7 @@ if torch.cuda.is_available():
 from data.collators import VQACollator
 from data.datasets import VQADataset
 from data.advanced_datasets import ConstantLengthDataset
+# from data.advanced_parallel_datasets import ParallelConstantLengthDataset
 from data.processors import get_image_processor, get_tokenizer
 from models.vision_language_model import VisionLanguageModel
 import models.config as config
@@ -42,7 +49,9 @@ def seed_worker(worker_id):
 
 def init_dist():
     dist.init_process_group(backend='nccl')
-    torch.cuda.set_device(dist.get_rank())
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    # torch.cuda.manual_seed(0)           # seed *this* GPU only
 
 def destroy_dist():
     dist.destroy_process_group()
@@ -65,7 +74,8 @@ def dist_gather(o):
     return o_all
 
 def wrap_model(model):
-    return DistributedDataParallel(model, device_ids=[dist.get_rank()])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    return DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
 
 def get_run_name(train_cfg, vlm_cfg):
     dataset_size = "full_ds" if train_cfg.data_cutoff_idx is None else f"{train_cfg.data_cutoff_idx}samples"
@@ -96,6 +106,8 @@ def get_dataloaders(train_cfg, vlm_cfg):
         try:
             train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name)
             train_ds['train'][0] # Check if the dataset is loaded correctly
+            if len(train_ds['train']) > 1000000:  # Sample first 1M samples to reduce unbalance between datasets
+                train_ds['train'] = train_ds['train'].select(range(1000000))
             combined_train_data.append(train_ds['train'])
         except Exception as e:
             if is_master():
@@ -123,7 +135,7 @@ def get_dataloaders(train_cfg, vlm_cfg):
 
     train_dataset = VQADataset(train_ds.select(range(train_size)), tokenizer, image_processor, vlm_cfg.mp_image_token_length)
     
-    train_dataset = ConstantLengthDataset(train_dataset, infinite=False, max_sample_length=train_cfg.max_sample_length, seq_length=vlm_cfg.lm_max_length, num_of_sequences=train_cfg.batch_size*64, queue_size=train_cfg.batch_size*64*2,
+    train_dataset = ConstantLengthDataset(train_dataset, infinite=False, max_sample_length=train_cfg.max_sample_length, seq_length=vlm_cfg.lm_max_length, num_of_sequences=train_cfg.batch_size*4, queue_size=4,
                                           max_images_per_example=train_cfg.max_images_per_example, max_images_per_knapsack=train_cfg.max_images_per_knapsack)
     val_dataset = VQADataset(train_ds.select(range(train_size, total_samples)), tokenizer, image_processor, vlm_cfg.mp_image_token_length)
 
@@ -139,8 +151,9 @@ def get_dataloaders(train_cfg, vlm_cfg):
         train_dataset,
         batch_size=train_cfg.batch_size,    # =per device BS in DDP
         collate_fn=vqa_collator,
-        num_workers=8,
+        num_workers=2,
         pin_memory=True,
+        persistent_workers=True,
         drop_last=True,
         worker_init_fn=seed_worker,
         generator=g,
@@ -158,12 +171,19 @@ def get_dataloaders(train_cfg, vlm_cfg):
         batch_size=train_cfg.batch_size,
         sampler=val_sampler,
         collate_fn=vqa_collator,
-        num_workers=8,
+        num_workers=1,
         pin_memory=True,
+        persistent_workers=True,
         drop_last=True,
         worker_init_fn=seed_worker,
         generator=g,
     )
+
+    # Warmup dataloaders to kickstart worker processes
+    print("Warming up dataloaders...")   
+    next(iter(train_loader))
+    next(iter(val_loader))
+    print("Warmup complete.")
 
     return train_loader, val_loader
 
@@ -186,7 +206,6 @@ def get_lr(it, max_lr, max_steps):
 
 def train(train_cfg, vlm_cfg):
     train_loader, val_loader = get_dataloaders(train_cfg, vlm_cfg)
-    tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer, vlm_cfg.vlm_extra_tokens, vlm_cfg.lm_chat_template)
 
     run_name = get_run_name(train_cfg, vlm_cfg)
     total_dataset_size = len(train_loader.dataset)
@@ -212,10 +231,10 @@ def train(train_cfg, vlm_cfg):
     
     if is_master():
         print(f"nanoVLM initialized with {sum(p.numel() for p in model.parameters()):,} parameters") 
-        print(f"Training summary{' (global)' if is_dist() else ''}: {len(train_loader.dataset)} samples, {int(len(train_loader)*get_world_size())} batches/epoch, batch size {int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}{', training on ' + str(get_world_size()) + ' GPUs' if is_dist() else ''}")
+        print(f"Training summary{' (global)' if is_dist() else ''}: {len(train_loader.dataset)*get_world_size()} samples, {int(len(train_loader)*get_world_size())} batches/epoch, batch size {int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}{', training on ' + str(get_world_size()) + ' GPUs' if is_dist() else ''}")
         if is_dist():
             print(f"Training summary per GPU: {len(train_loader)} batches/epoch, batch size {train_loader.batch_size}")
-        print(f"Validation summary{' (global)' if is_dist() else ''}: {len(val_loader.dataset)} samples, {int(len(val_loader)*get_world_size())} batches/epoch, batch size {int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}{', training on ' + str(get_world_size()) + ' GPUs' if is_dist() else ''}")
+        print(f"Validation summary{' (global)' if is_dist() else ''}: {len(val_loader.dataset)*get_world_size()} samples, {int(len(val_loader)*get_world_size())} batches/epoch, batch size {int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}{', training on ' + str(get_world_size()) + ' GPUs' if is_dist() else ''}")
         if is_dist():
             print(f"Validation summary per GPU: {len(val_loader)} batches/epoch, batch size {val_loader.batch_size}")
 
@@ -345,12 +364,14 @@ def train(train_cfg, vlm_cfg):
             accumulated_stats['images_per_sample'].extend(images_per_sample)
             
             if train_cfg.eval_in_epochs and global_step % train_cfg.eval_interval == 0 and is_update_step and global_step > 0:
+                print("Evaluating...")
                 model.eval()
                 if device == "cuda":
                     torch.cuda.empty_cache()
                 with torch.no_grad():
                     total_val_loss = 0
-                    for batch in val_loader:
+                    val_batches = 0
+                    for batch in synchronized_dataloader_step(val_loader, is_dist()):
                         images = batch["images"]
                         input_ids = batch["input_ids"].to(device)
                         labels = batch["labels"].to(device)
@@ -360,8 +381,11 @@ def train(train_cfg, vlm_cfg):
                             _, loss = model(input_ids, images, attention_mask=attention_mask, targets=labels)
 
                         total_val_loss += loss.item()
-                    avg_val_loss = total_val_loss / len(val_loader) if len(val_loader) > 0 else 0
+                        val_batches += 1
+                    avg_val_loss = total_val_loss / val_batches if val_batches > 0 else 0
+                    print(f"Avg val loss: {avg_val_loss}")
                     avg_val_loss = mean(dist_gather(avg_val_loss)) if is_dist() else avg_val_loss
+                    print(f"Avg val loss: {avg_val_loss} gathered")
                     if avg_val_loss < best_val_loss:
                         best_val_loss = avg_val_loss
                         if is_master():
@@ -369,6 +393,7 @@ def train(train_cfg, vlm_cfg):
                             save_model.save_pretrained(save_directory=os.path.join(vlm_cfg.vlm_checkpoint_path, run_name))
 
                     lmms_results = {}
+                    print("Evaluating using lmms-eval...")
                     if train_cfg.use_lmms_eval:
                         from evaluation import cli_evaluate
                         
