@@ -12,6 +12,7 @@ import numpy
 import random
 import argparse
 import contextlib
+import subprocess
 import torch.optim as optim
 from statistics import mean
 from dataclasses import asdict
@@ -19,10 +20,13 @@ from datasets import load_dataset, concatenate_datasets, get_dataset_config_name
 from torch.utils.data import DataLoader, DistributedSampler
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
+from datetime import timedelta
 
 torch.manual_seed(0)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(0)
+
+PG_CPU = None
 
 from data.collators import VQACollator
 from data.datasets import VQADataset
@@ -37,6 +41,9 @@ from data.data_utils import synchronized_dataloader_step
 #Otherwise, the tokenizer will throw a warning
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+import warnings
+warnings.filterwarnings("ignore", message=".*Length of IterableDataset.*")
 
 # Fix for "Decompressed data too large" error with certain PNGs
 import PIL.PngImagePlugin
@@ -68,10 +75,28 @@ def get_world_size():
 def get_rank():
     return dist.get_rank() if is_dist() else 0
 
-def dist_gather(o):
-    o_all = [None for _ in range(dist.get_world_size())]
-    dist.all_gather_object(o_all, o)
-    return o_all
+def dist_gather(obj):
+    """
+    Gather *any* picklable object from every rank without allocating
+    temporary CUDA buffers.  Returns a list [rank0_obj, rank1_obj, …].
+
+    Falls back to a single-rank list when torch.distributed is not initialised.
+    """
+    if not (dist.is_available() and dist.is_initialized()):
+        return [obj]
+
+    result = [None] * dist.get_world_size()
+    dist.all_gather_object(result, obj, group=PG_CPU)  # CPU path
+    return result
+
+def dist_mean_scalar(x: float | int) -> float:
+    if not (dist.is_available() and dist.is_initialized()):
+        return float(x)
+
+    t = torch.tensor(x, device=torch.cuda.current_device(), dtype=torch.float32)
+    dist.all_reduce(t, op=dist.ReduceOp.SUM)           # in‑place, returns None
+    t /= dist.get_world_size()
+    return t.item()
 
 def wrap_model(model):
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -91,6 +116,7 @@ def get_run_name(train_cfg, vlm_cfg):
     return f"nanoVLM_{vit}_{mp}_{llm}_{num_gpus}_{dataset_size}_{batch_size}_{max_training_steps}_{learning_rate}_{date}"
 
 def get_dataloaders(train_cfg, vlm_cfg):
+    print(f"Getting dataloaders from {train_cfg.train_dataset_path}")
     # Create datasets
     image_processor = get_image_processor(vlm_cfg.max_img_size, vlm_cfg.vit_img_size)
     tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer, vlm_cfg.vlm_extra_tokens, vlm_cfg.lm_chat_template)
@@ -135,7 +161,7 @@ def get_dataloaders(train_cfg, vlm_cfg):
 
     train_dataset = VQADataset(train_ds.select(range(train_size)), tokenizer, image_processor, vlm_cfg.mp_image_token_length)
     
-    train_dataset = ConstantLengthDataset(train_dataset, infinite=False, max_sample_length=train_cfg.max_sample_length, seq_length=vlm_cfg.lm_max_length, num_of_sequences=train_cfg.batch_size*4, queue_size=4,
+    train_dataset = ConstantLengthDataset(train_dataset, infinite=False, max_sample_length=train_cfg.max_sample_length, seq_length=vlm_cfg.lm_max_length, num_of_sequences=train_cfg.batch_size*4, queue_size=8,
                                           max_images_per_example=train_cfg.max_images_per_example, max_images_per_knapsack=train_cfg.max_images_per_knapsack)
     val_dataset = VQADataset(train_ds.select(range(train_size, total_samples)), tokenizer, image_processor, vlm_cfg.mp_image_token_length)
 
@@ -151,7 +177,7 @@ def get_dataloaders(train_cfg, vlm_cfg):
         train_dataset,
         batch_size=train_cfg.batch_size,    # =per device BS in DDP
         collate_fn=vqa_collator,
-        num_workers=2,
+        num_workers=3,
         pin_memory=True,
         persistent_workers=True,
         drop_last=True,
@@ -207,6 +233,14 @@ def get_lr(it, max_lr, max_steps):
 def train(train_cfg, vlm_cfg):
     train_loader, val_loader = get_dataloaders(train_cfg, vlm_cfg)
 
+    if is_dist():
+        print("Rank", get_rank(), "Waiting for all workers to get dataloaders...")
+        if is_master():
+            print("Waiting for all workers to get dataloaders...")
+        dist.barrier()
+        if is_master():
+            print("All workers have gotten dataloaders.")
+
     run_name = get_run_name(train_cfg, vlm_cfg)
     total_dataset_size = len(train_loader.dataset)
     if train_cfg.log_wandb and is_master():
@@ -222,6 +256,9 @@ def train(train_cfg, vlm_cfg):
             },
             name=run_name,
         )
+        # Define a custom x-axis for lmms-eval metrics
+        lmms_eval_step = "<lmms-eval-step>"
+        run.define_metric(name="lmms_eval/*", step_metric=lmms_eval_step)
 
     # Initialize model
     if train_cfg.resume_from_vlm_checkpoint:
@@ -271,6 +308,8 @@ def train(train_cfg, vlm_cfg):
 
     epoch_times = []
     best_val_loss = float('inf')
+    best_model_path = None
+    logged_eval_steps = set()
     global_step = 0
     epoch = 0
     
@@ -364,7 +403,6 @@ def train(train_cfg, vlm_cfg):
             accumulated_stats['images_per_sample'].extend(images_per_sample)
             
             if train_cfg.eval_in_epochs and global_step % train_cfg.eval_interval == 0 and is_update_step and global_step > 0:
-                print("Evaluating...")
                 model.eval()
                 if device == "cuda":
                     torch.cuda.empty_cache()
@@ -383,41 +421,30 @@ def train(train_cfg, vlm_cfg):
                         total_val_loss += loss.item()
                         val_batches += 1
                     avg_val_loss = total_val_loss / val_batches if val_batches > 0 else 0
-                    print(f"Avg val loss: {avg_val_loss}")
                     avg_val_loss = mean(dist_gather(avg_val_loss)) if is_dist() else avg_val_loss
-                    print(f"Avg val loss: {avg_val_loss} gathered")
+
+                    checkpoint_path_step = ""
+                    if is_master():
+                        # Save a checkpoint for this evaluation step
+                        checkpoint_path_step = os.path.join(vlm_cfg.vlm_checkpoint_path, run_name, f"step_{global_step}")
+                        save_model = model.module if is_dist() else model # unwrap the model for saving if DDP
+                        save_model.save_pretrained(save_directory=checkpoint_path_step)
+
+                        if train_cfg.use_lmms_eval:
+                            # Submit evaluation job
+                            cmd = f"sbatch --export=HF_HOME=$HF_HOME eval.slurm {checkpoint_path_step} {global_step} {run_name} {train_cfg.lmms_eval_limit} {train_cfg.lmms_eval_tasks} {train_cfg.lmms_eval_batch_size}"
+                            print(f"Submitting evaluation job: {cmd}")
+                            subprocess.run(cmd, shell=True)
+
                     if avg_val_loss < best_val_loss:
                         best_val_loss = avg_val_loss
                         if is_master():
-                            save_model = model.module if is_dist() else model  # unwrap the model for saving if DDP
-                            save_model.save_pretrained(save_directory=os.path.join(vlm_cfg.vlm_checkpoint_path, run_name))
-
-                    lmms_results = {}
-                    print("Evaluating using lmms-eval...")
-                    if train_cfg.use_lmms_eval:
-                        from evaluation import cli_evaluate
-                        
-                        eval_args = argparse.Namespace(
-                            model=model.module if is_dist() else model,
-                            tasks=train_cfg.lmms_eval_tasks,
-                            limit=train_cfg.lmms_eval_limit,
-                            batch_size=train_cfg.lmms_eval_batch_size,
-                            process_with_media=True,
-                            device=device,
-                        )
-                        # Evaluate using the CLI wrapper
-                        eval_results = cli_evaluate(eval_args)
-
-                        if is_master() and eval_results and "results" in eval_results[0]:
-                            for task_name, task_results in eval_results[0]["results"].items():
-                                for metric_name, metric_value in task_results.items():
-                                    if isinstance(metric_value, (int, float)):
-                                        lmms_results[f"{task_name}_{metric_name.split(',')[0]}"] = metric_value
+                            best_model_path = checkpoint_path_step
                     
                     if is_master():
                         print(f"Step: {global_step}, Val Loss: {avg_val_loss:.4f}, Tokens/s: {tokens_per_second:.2f}")
                         if train_cfg.log_wandb:
-                            run.log({"val_loss": avg_val_loss, **{f"lmms_eval/{key}": value for key, value in lmms_results.items()}}, step=global_step)
+                            run.log({"val_loss": avg_val_loss}, step=global_step)
 
                 model.train()
 
@@ -453,6 +480,34 @@ def train(train_cfg, vlm_cfg):
                     run.log({
                         **{f"training_stats/{key}": value for key, value in stats.items()},
                     }, step=global_step)
+
+                    # Check for and log new lmms-eval results
+                    eval_results_dir = os.path.join('eval_results', run_name)
+                    if os.path.exists(eval_results_dir):
+                        logged_results_count = 0
+                        for result_file in os.listdir(eval_results_dir):
+                            if result_file.startswith('step_') and result_file.endswith('.json'):
+                                try:
+                                    step = int(result_file.replace('step_', '').replace('.json', ''))
+                                    if step not in logged_eval_steps:
+                                        with open(os.path.join(eval_results_dir, result_file), 'r') as f:
+                                            import json
+                                            eval_data = json.load(f)
+                                        
+                                        lmms_results = eval_data.get('results', {})
+                                        if lmms_results:
+                                            metrics = {f"lmms_eval/{key}": value for key, value in lmms_results.items()}
+                                            metrics[lmms_eval_step] = eval_data['global_step']
+                                            if logged_results_count > 0:
+                                                print(f"Logging more than one lmms-eval result for step {global_step}, try to avoid this.")
+                                            run.log(metrics, step=global_step+logged_results_count)  # We need to the global step otherwise wandb raises the step counter
+                                            logged_results_count += 1
+                                            print(f"Logged lmms-eval results from step {eval_data['global_step']}")
+                                        
+                                        logged_eval_steps.add(step)
+                                except (ValueError, KeyError, json.JSONDecodeError) as e:
+                                    print(f"Warning: Could not process eval result file {result_file}. Error: {e}")
+                                    continue
                 
                 # ALL RANKS: Reset accumulators
                 for key in accumulated_stats:
@@ -462,7 +517,7 @@ def train(train_cfg, vlm_cfg):
             if is_update_step:
                 # ALL RANKS: gather loss from all ranks if DDP
                 if is_dist():
-                    batch_loss_gathered = mean(dist_gather(batch_loss))
+                    batch_loss_gathered = dist_mean_scalar(batch_loss)
                 else:
                     batch_loss_gathered = batch_loss
                     
@@ -510,9 +565,9 @@ def train(train_cfg, vlm_cfg):
         print(f"Average time per sample: {avg_time_per_sample:.4f}s")
 
         # Push the best model to the hub (Please set your user name in the config!)
-        if vlm_cfg.hf_repo_name is not None:
-            print("Training complete. Pushing model to Hugging Face Hub...")
-            hf_model = VisionLanguageModel.from_pretrained(os.path.join(vlm_cfg.vlm_checkpoint_path, run_name))
+        if vlm_cfg.hf_repo_name is not None and best_model_path:
+            print(f"Training complete. Pushing best model from {best_model_path} to Hugging Face Hub...")
+            hf_model = VisionLanguageModel.from_pretrained(best_model_path)
             hf_model.push_to_hub(vlm_cfg.hf_repo_name)
 
         if train_cfg.log_wandb:
@@ -521,6 +576,7 @@ def train(train_cfg, vlm_cfg):
             run.finish()
 
 def main():
+    global PG_CPU
     parser = argparse.ArgumentParser()
     parser.add_argument('--lr_mp', type=float, help='Learning rate for the mapping network')
     parser.add_argument('--lr_backbones', type=float, help='Learning rate for the backbones')
@@ -553,6 +609,7 @@ def main():
 
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         init_dist()
+        PG_CPU = dist.new_group(backend="gloo")   # host‑RAM, zero GPU allocations
 
     if is_master():
         print("--- VLM Config ---")
