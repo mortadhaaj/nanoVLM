@@ -49,14 +49,15 @@ class VLMConfig:
       "r7c1": "<row_7_col_1>", "r7c2": "<row_7_col_2>", "r7c3": "<row_7_col_3>", "r7c4": "<row_7_col_4>", "r7c5": "<row_7_col_5>", "r7c6": "<row_7_col_6>", "r7c7": "<row_7_col_7>", "r7c8": "<row_7_col_8>",
       "r8c1": "<row_8_col_1>", "r8c2": "<row_8_col_2>", "r8c3": "<row_8_col_3>", "r8c4": "<row_8_col_4>", "r8c5": "<row_8_col_5>", "r8c6": "<row_8_col_6>", "r8c7": "<row_8_col_7>", "r8c8": "<row_8_col_8>"})
     vlm_load_backbone_weights: bool = True
-    vlm_checkpoint_path: str = 'checkpoints'
+    vlm_checkpoint_path: str = 'checkpoints/base/step_10800/'
     hf_repo_name: str = 'nanoVLM'
 
 
 @dataclass
 class TrainConfig:
     lr_mp: float = 0.00512
-    lr_backbones: float = 5e-5
+    lr_vision_backbone: float = 5e-5
+    lr_language_backbone: float = 5e-5
     data_cutoff_idx: int = None
     val_ratio: float = 0.005
     batch_size: int = 2
@@ -70,12 +71,13 @@ class TrainConfig:
     max_images_per_knapsack: int = 18
     max_sample_length: int = 4096
     compile: bool = False
-    resume_from_vlm_checkpoint: bool = False # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
-    train_dataset_path: str = '/fsx/.cache/hub/datasets--HuggingFaceM4--cauldron_v3_test/snapshots/52ed25adc89b96704667b7189f9b0b5ce5d8cadf'
-    train_dataset_name: tuple[str, ...] = ("all",)
+    resume_from_vlm_checkpoint: bool = True # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
+    train_dataset_path: str = '/fsx/andi/datasets/asterix_rated'
+    train_dataset_name: tuple[str, ...] = ("all", )
+    train_min_rating: int = 3
     wandb_entity: str = "HuggingFace" # Indicate the entity to log to in wandb
     log_wandb: bool = True
     use_lmms_eval: bool = True # Use lmms-eval for evaluation
-    lmms_eval_tasks: str = 'mmstar,mmmu,ocrbench,textvqa' # Pass additional task as one string, seperated by commas without spaces (e.g. 'mmstar,mmmu,ocrbench')
+    lmms_eval_tasks: str = 'mmstar,mmmu,ocrbench,textvqa,chartqa' # Pass additional task as one string, seperated by commas without spaces (e.g. 'mmstar,mmmu,ocrbench')
     lmms_eval_limit: float = None
     lmms_eval_batch_size: int = 128
