@@ -11,6 +11,15 @@ class BaseCollator(object):
         batch["attention_mask"] = [torch.nn.functional.pad(attention_mask, (max_length - len(attention_mask), 0), value=0) for attention_mask in batch["attention_mask"]]
 
     def prepare_batch(self, batch, max_length=None):
+        # 1) Handle empty
+        if not batch:
+            return {"input_ids": [], "labels": [], "attention_mask": [], "images": []}
+
+        # 2) Drop None rows
+        batch = [s for s in batch if s is not None]
+        if not batch:
+            return {"input_ids": [], "labels": [], "attention_mask": [], "images": []}
+
         # batch is a list of dicts, each containing "input_ids", "attention_mask", "labels", "images"
         # let's convert it to a dict of lists of tensors
         batch = {k: [item[k] for item in batch] for k in batch[0]}

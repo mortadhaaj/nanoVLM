@@ -16,11 +16,13 @@ import subprocess
 import torch.optim as optim
 from statistics import mean
 from dataclasses import asdict
-from datasets import load_dataset, concatenate_datasets, get_dataset_config_names
+from datasets import load_dataset, concatenate_datasets, get_dataset_config_names, load_from_disk
 from torch.utils.data import DataLoader, DistributedSampler
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 from datetime import timedelta
+from huggingface_hub import list_repo_files
+from datasets.distributed import split_dataset_by_node
 
 torch.manual_seed(0)
 if torch.cuda.is_available():
@@ -55,7 +57,7 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 def init_dist():
-    dist.init_process_group(backend='nccl')
+    dist.init_process_group(backend='nccl', timeout=timedelta(minutes=30))
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
     # torch.cuda.manual_seed(0)           # seed *this* GPU only
@@ -106,7 +108,7 @@ def get_run_name(train_cfg, vlm_cfg):
     dataset_size = "full_ds" if train_cfg.data_cutoff_idx is None else f"{train_cfg.data_cutoff_idx}samples"
     batch_size = f"bs{int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}"
     max_training_steps = f"{train_cfg.max_training_steps}"
-    learning_rate = f"lr{train_cfg.lr_backbones}-{train_cfg.lr_mp}"
+    learning_rate = f"lr_vision_{train_cfg.lr_vision_backbone}-language_{train_cfg.lr_language_backbone}-{train_cfg.lr_mp}"
     num_gpus = f"{get_world_size()}xGPU"
     date = time.strftime("%m%d-%H%M%S")
     vit = f"{vlm_cfg.vit_model_type.split('/')[-1]}" + f"_{vlm_cfg.max_img_size}"
@@ -121,20 +123,38 @@ def get_dataloaders(train_cfg, vlm_cfg):
     image_processor = get_image_processor(vlm_cfg.max_img_size, vlm_cfg.vit_img_size)
     tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer, vlm_cfg.vlm_extra_tokens, vlm_cfg.lm_chat_template)
 
-    # Load and combine all training datasets
-    combined_train_data = []
-
     dataset_names_to_load = train_cfg.train_dataset_name
+    if "shards" in train_cfg.train_dataset_name:
+        print("Loading shards")
+        total_shards = 56
+        dataset_names_to_load = [train_cfg.train_dataset_path + f"/shard_{i}" for i in range(total_shards)]
+
     if "all" in dataset_names_to_load:
         dataset_names_to_load = get_dataset_config_names(train_cfg.train_dataset_path)
 
+    # Load and combine all training datasets
+    combined_train_data = []
+
+
     for dataset_name in dataset_names_to_load:
+        print(f"Loading dataset: {dataset_name}")
+        if "shard_" in dataset_name:
+            try:
+                train_ds = load_from_disk(dataset_name)
+                combined_train_data.append(train_ds)
+                continue
+            except Exception as e:
+                print(f"Warning: Failed to load dataset shard '{dataset_name}' from '{train_cfg.train_dataset_path}'. Error: {e}")
+                continue
         try:
-            train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name)
-            train_ds['train'][0] # Check if the dataset is loaded correctly
-            if len(train_ds['train']) > 1000000:  # Sample first 1M samples to reduce unbalance between datasets
-                train_ds['train'] = train_ds['train'].select(range(1000000))
-            combined_train_data.append(train_ds['train'])
+            if dataset_name == "aguvis-stage-1":
+                train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name, split="train", features=combined_train_data[0].features)
+            else:
+                train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name, split="train")
+            train_ds[0] # Check if the dataset is loaded correctly
+            # if len(train_ds) > 1000000:  # Sample first 1M samples to reduce unbalance between datasets
+                # train_ds = train_ds.select(range(1000000))
+            combined_train_data.append(train_ds)
         except Exception as e:
             if is_master():
                 print(f"Warning: Failed to load dataset config '{dataset_name}' from '{train_cfg.train_dataset_path}'. Error: {e}")
@@ -144,26 +164,28 @@ def get_dataloaders(train_cfg, vlm_cfg):
         raise ValueError("No valid datasets were loaded. Please check your dataset path and configurations.")
     
     train_ds = concatenate_datasets(combined_train_data)
-    
-    train_ds = train_ds.shuffle(seed=0) # Shuffle the training dataset, so train and val get equal contributions from all concatenated datasets
-    
-    if is_dist():  # We need to shard the dataset in DDP since we are using an iterable dataset instead of the distributed sampler
-        train_ds = train_ds.shard(num_shards=get_world_size(), index=get_rank())
-
     # Apply cutoff if specified
     if train_cfg.data_cutoff_idx is None:
         total_samples = len(train_ds)  # Use the entire dataset
     else:
         total_samples = min(len(train_ds), train_cfg.data_cutoff_idx)
 
-    val_size = int(total_samples * train_cfg.val_ratio)
-    train_size = total_samples - val_size
+    train_ds = train_ds.shuffle(seed=0) # Shuffle the training dataset, so train and val get equal contributions from all concatenated datasets  
 
-    train_dataset = VQADataset(train_ds.select(range(train_size)), tokenizer, image_processor, vlm_cfg.mp_image_token_length)
-    
+    if is_dist():  # We need to shard the dataset in DDP since we are using an iterable dataset instead of the distributed sampler
+        train_ds = train_ds.shard(num_shards=get_world_size(), index=get_rank())
+
+    val_size = int(len(train_ds) * train_cfg.val_ratio)
+    print(f"Val size: {val_size}")
+
+    val_ds = train_ds.select(range(val_size))
+    train_ds = train_ds.select(range(val_size, len(train_ds)))
+
+    train_dataset = VQADataset(train_ds, tokenizer, image_processor, vlm_cfg.mp_image_token_length, train_cfg.train_min_rating)
+    val_dataset = VQADataset(val_ds, tokenizer, image_processor, vlm_cfg.mp_image_token_length, train_cfg.train_min_rating)
+
     train_dataset = ConstantLengthDataset(train_dataset, infinite=False, max_sample_length=train_cfg.max_sample_length, seq_length=vlm_cfg.lm_max_length, num_of_sequences=train_cfg.batch_size*4, queue_size=8,
-                                          max_images_per_example=train_cfg.max_images_per_example, max_images_per_knapsack=train_cfg.max_images_per_knapsack)
-    val_dataset = VQADataset(train_ds.select(range(train_size, total_samples)), tokenizer, image_processor, vlm_cfg.mp_image_token_length)
+                                        max_images_per_example=train_cfg.max_images_per_example, max_images_per_knapsack=train_cfg.max_images_per_knapsack)
 
     # Create collators
     vqa_collator = VQACollator(tokenizer, vlm_cfg.lm_max_length)
@@ -197,7 +219,7 @@ def get_dataloaders(train_cfg, vlm_cfg):
         batch_size=train_cfg.batch_size,
         sampler=val_sampler,
         collate_fn=vqa_collator,
-        num_workers=1,
+        num_workers=2,
         pin_memory=True,
         persistent_workers=True,
         drop_last=True,
@@ -237,7 +259,7 @@ def train(train_cfg, vlm_cfg):
         print("Rank", get_rank(), "Waiting for all workers to get dataloaders...")
         if is_master():
             print("Waiting for all workers to get dataloaders...")
-        dist.barrier()
+        dist.barrier(device_ids=int(os.environ["LOCAL_RANK"]))
         if is_master():
             print("All workers have gotten dataloaders.")
 
@@ -268,24 +290,33 @@ def train(train_cfg, vlm_cfg):
     
     if is_master():
         print(f"nanoVLM initialized with {sum(p.numel() for p in model.parameters()):,} parameters") 
-        print(f"Training summary{' (global)' if is_dist() else ''}: {len(train_loader.dataset)*get_world_size()} samples, {int(len(train_loader)*get_world_size())} batches/epoch, batch size {int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}{', training on ' + str(get_world_size()) + ' GPUs' if is_dist() else ''}")
+        print(f"Training summary{' (global)' if is_dist() else ''}: {-1*get_world_size()} samples, {int(len(train_loader)*get_world_size())} batches/epoch, batch size {int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}{', training on ' + str(get_world_size()) + ' GPUs' if is_dist() else ''}")
         if is_dist():
             print(f"Training summary per GPU: {len(train_loader)} batches/epoch, batch size {train_loader.batch_size}")
-        print(f"Validation summary{' (global)' if is_dist() else ''}: {len(val_loader.dataset)*get_world_size()} samples, {int(len(val_loader)*get_world_size())} batches/epoch, batch size {int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}{', training on ' + str(get_world_size()) + ' GPUs' if is_dist() else ''}")
+        print(f"Validation summary{' (global)' if is_dist() else ''}: {-1*get_world_size()} samples, {int(len(val_loader)*get_world_size())} batches/epoch, batch size {int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}{', training on ' + str(get_world_size()) + ' GPUs' if is_dist() else ''}")
         if is_dist():
             print(f"Validation summary per GPU: {len(val_loader)} batches/epoch, batch size {val_loader.batch_size}")
 
     # Define optimizer groups
     # Since we have pretrained vision and language backbones, but a newly initialized modality projection layer, it doesn't make sense to train them with the same learning rate
     # You could opt to fully freeze the backbones and only train the MP layer, but finetuning them with a lower learning rate makes the training as a whole easier
-    param_groups = [{'params': list(model.MP.parameters()), 'lr': train_cfg.lr_mp}]
-
-    if train_cfg.lr_backbones > 0:
-        param_groups.append({'params': list(model.decoder.parameters()) + list(model.vision_encoder.parameters()), 'lr': train_cfg.lr_backbones})
+    param_groups = []
+    if train_cfg.lr_mp > 0:
+        param_groups.append({'params': list(model.MP.parameters()), 'lr': train_cfg.lr_mp})
     else:
-        for p in list(model.decoder.parameters()) + list(model.vision_encoder.parameters()):
+        for p in list(model.MP.parameters()):
             p.requires_grad = False
-        
+    if train_cfg.lr_vision_backbone > 0:
+        param_groups.append({'params': list(model.vision_encoder.parameters()), 'lr': train_cfg.lr_vision_backbone})
+    else:
+        for p in list(model.vision_encoder.parameters()):
+            p.requires_grad = False
+    if train_cfg.lr_language_backbone > 0:
+        param_groups.append({'params': list(model.decoder.parameters()), 'lr': train_cfg.lr_language_backbone})
+    else:
+        for p in list(model.decoder.parameters()):
+            p.requires_grad = False
+
     optimizer = optim.AdamW(param_groups)
     all_params = [p for group in optimizer.param_groups for p in group['params']]
 
@@ -304,7 +335,9 @@ def train(train_cfg, vlm_cfg):
     if train_cfg.compile:
         model = torch.compile(model)
     if is_dist():
+        print("Wrapping model for DDP")
         model = wrap_model(model)
+        print("Model wrapped for DDP")
 
     epoch_times = []
     best_val_loss = float('inf')
@@ -331,6 +364,7 @@ def train(train_cfg, vlm_cfg):
         optimizer.zero_grad()
         data_load_start = time.time()
 
+        print("Starting training loop")
         for i, batch in enumerate(synchronized_dataloader_step(train_loader, is_dist())):
             is_update_step = (i + 1) % train_cfg.gradient_accumulation_steps == 0 or i + 1 == len(train_loader)
             batch_start_time = time.time()
@@ -370,13 +404,21 @@ def train(train_cfg, vlm_cfg):
                 if train_cfg.max_grad_norm is not None:
                     grad_norm = torch.nn.utils.clip_grad_norm_(all_params, max_norm=train_cfg.max_grad_norm)
 
-                adj_lr_mp = get_lr(global_step, train_cfg.lr_mp, train_cfg.max_training_steps)
-                optimizer.param_groups[0]['lr'] = adj_lr_mp
+                param_group_idx = 0
+                if train_cfg.lr_mp > 0:
+                    adj_lr_mp = get_lr(global_step, train_cfg.lr_mp, train_cfg.max_training_steps)
+                    optimizer.param_groups[param_group_idx]['lr'] = adj_lr_mp
+                    param_group_idx += 1
 
-                if train_cfg.lr_backbones > 0:
-                    adj_lr_backbones = get_lr(global_step, train_cfg.lr_backbones, train_cfg.max_training_steps)
-                    optimizer.param_groups[1]['lr'] = adj_lr_backbones
-                
+                if train_cfg.lr_vision_backbone > 0:
+                    adj_lr_vision_backbone = get_lr(global_step, train_cfg.lr_vision_backbone, train_cfg.max_training_steps)
+                    optimizer.param_groups[param_group_idx]['lr'] = adj_lr_vision_backbone
+                    param_group_idx += 1
+
+                if train_cfg.lr_language_backbone > 0:
+                    adj_lr_language_backbone = get_lr(global_step, train_cfg.lr_language_backbone, train_cfg.max_training_steps)
+                    optimizer.param_groups[param_group_idx]['lr'] = adj_lr_language_backbone
+              
                 optimizer.step()
                 optimizer.zero_grad()
 
@@ -410,6 +452,9 @@ def train(train_cfg, vlm_cfg):
                     total_val_loss = 0
                     val_batches = 0
                     for batch in synchronized_dataloader_step(val_loader, is_dist()):
+                        if val_batches > 64:
+                            print(f"Evaluated {val_batches} batches")
+                            break
                         images = batch["images"]
                         input_ids = batch["input_ids"].to(device)
                         labels = batch["labels"].to(device)
@@ -579,12 +624,15 @@ def main():
     global PG_CPU
     parser = argparse.ArgumentParser()
     parser.add_argument('--lr_mp', type=float, help='Learning rate for the mapping network')
-    parser.add_argument('--lr_backbones', type=float, help='Learning rate for the backbones')
+    parser.add_argument('--lr_vision_backbone', type=float, help='Learning rate for the vision backbone')
+    parser.add_argument('--lr_language_backbone', type=float, help='Learning rate for the language backbone')
     parser.add_argument('--vlm_checkpoint_path', type=str, help='Path to the VLM checkpoint for loading or saving')
     parser.add_argument('--compile', type=bool, help='Use torch.compile to optimize the model')
     parser.add_argument('--log_wandb', type=bool, help='Log to wandb')
     parser.add_argument('--resume_from_vlm_checkpoint', type=bool, default=False, help='Resume training from VLM checkpoint specified by vlm_checkpoint_path (or default if not provided)')
     parser.add_argument('--no_log_wandb', action='store_true', help='Do not log to wandb')
+    parser.add_argument('--train_dataset_path', type=str, help='Train dataset path')
+    parser.add_argument('--train_min_rating', type=int, help='Minimum rating of images per sample')
 
     args = parser.parse_args()
 
@@ -593,14 +641,20 @@ def main():
 
     if args.lr_mp is not None:
         train_cfg.lr_mp = args.lr_mp
-    if args.lr_backbones is not None:
-        train_cfg.lr_backbones = args.lr_backbones
+    if args.lr_vision_backbone is not None:
+        train_cfg.lr_vision_backbone = args.lr_vision_backbone
+    if args.lr_language_backbone is not None:
+        train_cfg.lr_language_backbone = args.lr_language_backbone
     if args.vlm_checkpoint_path is not None:
         vlm_cfg.vlm_checkpoint_path = args.vlm_checkpoint_path
     if args.compile is not None:
         train_cfg.compile = args.compile
     if args.no_log_wandb is True:
         train_cfg.log_wandb = False
+    if args.train_dataset_path is not None:
+        train_cfg.train_dataset_path = args.train_dataset_path
+    if args.train_min_rating is not None:
+        train_cfg.train_min_rating = args.train_min_rating
 
     if args.resume_from_vlm_checkpoint and args.vlm_checkpoint_path is not None:
         train_cfg.resume_from_vlm_checkpoint = True

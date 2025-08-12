@@ -118,6 +118,9 @@ class ConstantLengthDataset(IterableDataset):
                         more_examples = False
                         break
 
+                if sample is None:  # Ratings filtered out the sample
+                    continue
+
                 if len(sample["input_ids"]) >= self.max_sample_length:
                     continue  # skip overly long samples
                 if len(sample["images"]) > self.max_images_per_example:
