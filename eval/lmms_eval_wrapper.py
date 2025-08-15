@@ -48,7 +48,11 @@ class NanoVLMWrapper(lmms):
         
         # Get tokenizer and image processor from model config if not provided
         self.tokenizer = get_tokenizer(self.model.cfg.lm_tokenizer, self.model.cfg.vlm_extra_tokens, self.model.cfg.lm_chat_template)
-        self.image_processor = get_image_processor(self.model.cfg.max_img_size, self.model.cfg.vit_img_size)
+        resize_to_max_side_len = False
+        if hasattr(self.model.cfg, "resize_to_max_side_len"):
+            resize_to_max_side_len = self.model.cfg.resize_to_max_side_len
+        print(f"Resize to max side len: {resize_to_max_side_len}")
+        self.image_processor = get_image_processor(self.model.cfg.max_img_size, self.model.cfg.vit_img_size, resize_to_max_side_len)
             
     def _prepare_visual_input(self, visual_list: List[Image.Image]) -> Optional[torch.Tensor]:
         """Convert visual inputs to model format."""
@@ -71,6 +75,10 @@ class NanoVLMWrapper(lmms):
             
             # Process image
             processed_images, splitted_image_ratio = self.image_processor(image)
+            if not hasattr(self.tokenizer, "global_image_token") and splitted_image_ratio[0]*splitted_image_ratio[1] == len(processed_images) - 1:
+                # If the tokenizer doesn't have a global image token, but the processor generated it, remove it
+                processed_images = processed_images[1:]
+
             images.append(processed_images)
             splitted_image_ratios.append(splitted_image_ratio)
         

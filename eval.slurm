@@ -2,7 +2,7 @@
 #SBATCH --job-name=lmms_eval
 #SBATCH --output=logs/lmms_eval/%j.out
 #SBATCH --error=logs/lmms_eval/%j.err
-#SBATCH --time=02:00:00
+#SBATCH --time=08:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=11
 #SBATCH --partition=hopper-prod

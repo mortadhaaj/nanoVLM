@@ -9,11 +9,20 @@
 #SBATCH --cpus-per-task=88
 #SBATCH --partition=hopper-prod
 #SBATCH --qos=high
-#SBATCH --array=2
+#SBATCH --array=4
 #SBATCH --reservation=vllm_dataset
 
-module load cuda/12.9
+echo "--- Starting parallel data copy on all nodes... ---"
+# This srun command launches the copy script on all 4 nodes simultaneously.
+# The shell will not proceed to the next line until ALL nodes have finished.
+srun --ntasks-per-node=1 bash -c '
+  mkdir -p /scratch/cache/asterix_rated && \
+  cd /fsx/.cache/asterix_rated && \
+  find . -type f | parallel -j 16 rsync -R {} /scratch/cache/asterix_rated/
+'
+echo "--- All nodes have finished copying data. ---"
 
+module load cuda/12.9
 
 export RDMAV_FORK_SAFE=1
 export FI_EFA_FORK_SAFE=1
