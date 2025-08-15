@@ -20,24 +20,23 @@ class DynamicResize(torch.nn.Module):
         self,
         patch_size: int,
         max_side_len: int,
+        resize_to_max_side_len: bool = False,
         interpolation: InterpolationMode = InterpolationMode.BICUBIC,
-        allow_upscale: bool = True,
     ) -> None:
         super().__init__()
         self.p = int(patch_size)
         self.m = int(max_side_len)
         self.interpolation = interpolation
-        self.allow_upscale = allow_upscale
+        print(f"Resize to max side len: {resize_to_max_side_len}")
+        self.resize_to_max_side_len = resize_to_max_side_len
 
     # ------------------------------------------------------------
     def _get_new_hw(self, h: int, w: int) -> Tuple[int, int]:
         """Compute target (h, w) divisible by patch_size."""
         long, short = (w, h) if w >= h else (h, w)
 
-        # 1) clamp long side
-        target_long = min(self.m, math.ceil(long / self.p) * self.p)
-        if not self.allow_upscale:
-            target_long = min(target_long, long)
+        # 1) upscale long side
+        target_long = self.m if self.resize_to_max_side_len else min(self.m, math.ceil(long / self.p) * self.p)
 
         # 2) scale factor
         scale = target_long / long
@@ -101,3 +100,22 @@ class SplitImage(torch.nn.Module):
         patches = rearrange(x, 'b c (nh ph) (nw pw) -> (b nh nw) c ph pw',
                             ph=self.p, pw=self.p)
         return patches, (n_h, n_w)
+
+
+class GlobalAndSplitImages(torch.nn.Module):
+    def __init__(self, patch_size: int):
+        super().__init__()
+        self.p = patch_size
+        self.splitter = SplitImage(patch_size)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Tuple[int, int]]:
+        if x.ndim == 3:
+            x = x.unsqueeze(0)
+
+        patches, grid = self.splitter(x)
+
+        if grid == (1, 1):
+            return patches, grid  # Dont add global patch if there is only one patch
+
+        global_patch = resize(x, [self.p, self.p])
+        return torch.cat([global_patch, patches], dim=0), grid

@@ -120,7 +120,7 @@ def get_run_name(train_cfg, vlm_cfg):
 def get_dataloaders(train_cfg, vlm_cfg):
     print(f"Getting dataloaders from {train_cfg.train_dataset_path}")
     # Create datasets
-    image_processor = get_image_processor(vlm_cfg.max_img_size, vlm_cfg.vit_img_size)
+    image_processor = get_image_processor(vlm_cfg.max_img_size, vlm_cfg.vit_img_size, vlm_cfg.resize_to_max_side_len)
     tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer, vlm_cfg.vlm_extra_tokens, vlm_cfg.lm_chat_template)
 
     dataset_names_to_load = train_cfg.train_dataset_name
@@ -135,7 +135,6 @@ def get_dataloaders(train_cfg, vlm_cfg):
     # Load and combine all training datasets
     combined_train_data = []
 
-
     for dataset_name in dataset_names_to_load:
         print(f"Loading dataset: {dataset_name}")
         if "shard_" in dataset_name:
@@ -147,10 +146,7 @@ def get_dataloaders(train_cfg, vlm_cfg):
                 print(f"Warning: Failed to load dataset shard '{dataset_name}' from '{train_cfg.train_dataset_path}'. Error: {e}")
                 continue
         try:
-            if dataset_name == "aguvis-stage-1":
-                train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name, split="train", features=combined_train_data[0].features)
-            else:
-                train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name, split="train")
+            train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name, cache_dir="/scratch/cache/")['train']
             train_ds[0] # Check if the dataset is loaded correctly
             # if len(train_ds) > 1000000:  # Sample first 1M samples to reduce unbalance between datasets
                 # train_ds = train_ds.select(range(1000000))
@@ -199,7 +195,7 @@ def get_dataloaders(train_cfg, vlm_cfg):
         train_dataset,
         batch_size=train_cfg.batch_size,    # =per device BS in DDP
         collate_fn=vqa_collator,
-        num_workers=3,
+        num_workers=4,
         pin_memory=True,
         persistent_workers=True,
         drop_last=True,

@@ -64,10 +64,13 @@ class BaseDataset(Dataset):
                 if image.mode != 'RGB':
                     image = image.convert('RGB')
                 processed_image, splitted_image_count = self.image_processor(image)
+                if not hasattr(self.tokenizer, "global_image_token") and splitted_image_count[0]*splitted_image_count[1] == len(processed_image) - 1:
+                    # If the tokenizer doesn't have a global image token, but the processor generated it, remove it
+                    processed_image = processed_image[1:]
                 processed_images.append(processed_image)
                 splitted_image_counts.append(splitted_image_count)
             else:
-                raise ValueError("Error processing image")
+                raise ValueError(f"Error processing image: {image}")
         return processed_images, splitted_image_counts
 
 
