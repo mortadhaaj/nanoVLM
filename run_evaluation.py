@@ -41,7 +41,7 @@ def main():
         'results': {}
     }
 
-    if eval_results and "results" in eval_results[0]:
+    if eval_results is not None and "results" in eval_results[0]:
         print("Processing evaluation results.")
         for task_name, task_results in eval_results[0]["results"].items():
             for metric_name, metric_value in task_results.items():
