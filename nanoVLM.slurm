@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=train_nanoVLA_torchrun
-#SBATCH --output=logs/train_nanoVLA/%A_%a.out
-#SBATCH --error=logs/train_nanoVLA/%A_%a.err
+#SBATCH --job-name=train_nanoVLM_torchrun
+#SBATCH --output=logs/train_nanoVLM/%A_%a.out
+#SBATCH --error=logs/train_nanoVLM/%A_%a.err
 #SBATCH --time=47:59:00
 #SBATCH --nodes=4
 #SBATCH --gpus-per-node=8
@@ -10,14 +10,13 @@
 #SBATCH --partition=hopper-prod
 #SBATCH --qos=high
 #SBATCH --array=4
-#SBATCH --reservation=vllm_dataset
 
 echo "--- Starting parallel data copy on all nodes... ---"
 # This srun command launches the copy script on all 4 nodes simultaneously.
 # The shell will not proceed to the next line until ALL nodes have finished.
 srun --ntasks-per-node=1 bash -c '
   mkdir -p /scratch/cache/asterix_rated && \
-  cd /fsx/.cache/asterix_rated && \
+  cd /fsx/luis_wiedmann/.cache/asterix_rated && \
   find . -type f | parallel -j 16 rsync -R {} /scratch/cache/asterix_rated/
 '
 echo "--- All nodes have finished copying data. ---"
@@ -38,7 +37,7 @@ export NCCL_IB_DISABLE=0
 export NCCL_DEBUG=WARN
 
 # Change to project directory
-cd /fsx/andi/nanoVLM
+cd /fsx/luis_wiedmann/nanoVLM
 source .venv/bin/activate
 
 # Activate virtual environment
@@ -69,5 +68,7 @@ srun torchrun --nproc_per_node=$SLURM_GPUS_PER_NODE \
     --rdzv_id=$SLURM_JOB_ID \
     --rdzv_backend=c10d \
     --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
-    train.py --train_min_rating $SLURM_ARRAY_TASK_ID
+    train.py 
+    
+#--train_min_rating $SLURM_ARRAY_TASK_ID
 

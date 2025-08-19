@@ -8,8 +8,15 @@
 #SBATCH --partition=hopper-prod
 #SBATCH --qos=normal
 
+unset RANK
+unset LOCAL_RANK
+unset WORLD_SIZE
+unset MASTER_ADDR
+unset MASTER_PORT
+unset NCCL_SOCKET_IFNAME
+
 # Change to project directory
-cd /fsx/andi/nanoVLM
+cd /fsx/luis_wiedmann/nanoVLM
 source .venv/bin/activate
 
 # Activate virtual environment
