@@ -146,11 +146,14 @@ def get_dataloaders(train_cfg, vlm_cfg):
                 print(f"Warning: Failed to load dataset shard '{dataset_name}' from '{train_cfg.train_dataset_path}'. Error: {e}")
                 continue
         try:
-            train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name, cache_dir="/scratch/cache/")['train']
-            train_ds[0] # Check if the dataset is loaded correctly
-            # if len(train_ds) > 1000000:  # Sample first 1M samples to reduce unbalance between datasets
-                # train_ds = train_ds.select(range(1000000))
-            combined_train_data.append(train_ds)
+            if dataset_name=='art':
+                continue
+            else:
+                train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name, cache_dir="/scratch/cache/")['train']
+                train_ds[0] # Check if the dataset is loaded correctly
+                # if len(train_ds) > 1000000:  # Sample first 1M samples to reduce unbalance between datasets
+                    # train_ds = train_ds.select(range(1000000))
+                combined_train_data.append(train_ds)
         except Exception as e:
             if is_master():
                 print(f"Warning: Failed to load dataset config '{dataset_name}' from '{train_cfg.train_dataset_path}'. Error: {e}")
@@ -473,7 +476,7 @@ def train(train_cfg, vlm_cfg):
 
                         if train_cfg.use_lmms_eval:
                             # Submit evaluation job
-                            cmd = f"sbatch --export=HF_HOME=$HF_HOME eval.slurm {checkpoint_path_step} {global_step} {run_name} {train_cfg.lmms_eval_limit} {train_cfg.lmms_eval_tasks} {train_cfg.lmms_eval_batch_size}"
+                            cmd = f"sbatch eval.slurm {checkpoint_path_step} {global_step} {run_name} {train_cfg.lmms_eval_limit} {train_cfg.lmms_eval_tasks} {train_cfg.lmms_eval_batch_size}"
                             print(f"Submitting evaluation job: {cmd}")
                             subprocess.run(cmd, shell=True)
 

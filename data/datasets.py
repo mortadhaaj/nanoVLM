@@ -113,9 +113,12 @@ class VQADataset(BaseDataset):  # Visual Question Answering Dataset
 
     def _process_data(self, item):
         # Handle images (should be a list)
-        images_data = item['images']
-        if not isinstance(images_data, list):
-            images_data = [images_data]
+        if item['images'] is None:
+            images_data = []
+        else:
+            images_data = item['images']
+            if not isinstance(images_data, list):
+                images_data = [images_data]
 
         processed_images = []
         splitted_image_counts = []
