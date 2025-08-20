@@ -6,12 +6,15 @@ import logging
 
 
 class BaseDataset(Dataset):
-    def __init__(self, dataset, tokenizer, image_processor, mp_image_token_length, min_rating=0):
+    def __init__(self, dataset, tokenizer, image_processor, mp_image_token_length, relevance_min_rating=1, image_correspondence_min_rating=1, visual_dependency_min_rating=1, formatting_min_rating=1):
         self.dataset = dataset
         self.tokenizer = tokenizer
         self.image_processor = image_processor
         self.mp_image_token_length = mp_image_token_length
-        self.min_rating = min_rating
+        self.relevance_min_rating = relevance_min_rating
+        self.image_correspondence_min_rating = image_correspondence_min_rating
+        self.visual_dependency_min_rating = visual_dependency_min_rating
+        self.formatting_min_rating = formatting_min_rating
         self.prefix_len = self._get_prefix_len()
 
     def __len__(self):
@@ -27,13 +30,13 @@ class BaseDataset(Dataset):
         messages = []
         for index, text in enumerate(item['texts']):
             try:
-                if item.get('relevance_ratings') is not None and item['relevance_ratings'][index] is not None and item['relevance_ratings'][index] < self.min_rating:
+                if item.get('relevance_ratings') is not None and item['relevance_ratings'][index] is not None and item['relevance_ratings'][index] < self.relevance_min_rating:
                     continue
-                if item.get('image_correspondence_ratings') is not None and item['image_correspondence_ratings'][index] is not None and item['image_correspondence_ratings'][index] < self.min_rating:
+                if item.get('image_correspondence_ratings') is not None and item['image_correspondence_ratings'][index] is not None and item['image_correspondence_ratings'][index] < self.image_correspondence_min_rating:
                     continue
-                if item.get('visual_dependency_ratings') is not None and item['visual_dependency_ratings'][index] is not None and item['visual_dependency_ratings'][index] < self.min_rating:
+                if item.get('visual_dependency_ratings') is not None and item['visual_dependency_ratings'][index] is not None and item['visual_dependency_ratings'][index] < self.visual_dependency_min_rating:
                     continue
-                if item.get('formatting_ratings') is not None and item['formatting_ratings'][index] is not None and item['formatting_ratings'][index] < self.min_rating:
+                if item.get('formatting_ratings') is not None and item['formatting_ratings'][index] is not None and item['formatting_ratings'][index] < self.formatting_min_rating:
                     continue
             except Exception as e:
                 logging.warning(f"Error processing item: {item}, index: {index}: {e}")

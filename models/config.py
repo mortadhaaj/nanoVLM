@@ -37,7 +37,7 @@ class VLMConfig:
     mp_pixel_shuffle_factor: int = 4
     mp_image_token_length: int = 64
 
-    max_img_size: int = 2048
+    max_img_size: int = 1536 #2048
     resize_to_max_side_len: bool = False
 
     vlm_extra_tokens: dict[str, str] = field(default_factory=lambda: {"image_token": "<|image|>", "global_image_token": "<|global_image|>",
@@ -65,9 +65,9 @@ class TrainConfig:
     gradient_accumulation_steps: int = 8
     max_grad_norm: float = 1.0
     eval_in_epochs: bool = True
-    eval_interval: int = 300
+    eval_interval: int = 500
     stats_log_interval: int = 100
-    max_training_steps: int = 40000
+    max_training_steps: int = 20000
     max_images_per_example: int = 4
     max_images_per_knapsack: int = 18
     max_sample_length: int = 4096
@@ -75,7 +75,10 @@ class TrainConfig:
     resume_from_vlm_checkpoint: bool = False # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
     train_dataset_path: str = '/fsx/luis_wiedmann/datasets/asterix_rated'
     train_dataset_name: tuple[str, ...] = ("all", ) #('allava_laion', 'allava_vflan') #
-    train_min_rating: int = 0
+    relevance_min_rating: int = 1
+    image_correspondence_min_rating: int = 1
+    visual_dependency_min_rating: int = 1
+    formatting_min_rating: int = 1
     wandb_entity: str = "HuggingFace" # Indicate the entity to log to in wandb
     log_wandb: bool = True
     use_lmms_eval: bool = True # Use lmms-eval for evaluation

@@ -180,8 +180,8 @@ def get_dataloaders(train_cfg, vlm_cfg):
     val_ds = train_ds.select(range(val_size))
     train_ds = train_ds.select(range(val_size, len(train_ds)))
 
-    train_dataset = VQADataset(train_ds, tokenizer, image_processor, vlm_cfg.mp_image_token_length, train_cfg.train_min_rating)
-    val_dataset = VQADataset(val_ds, tokenizer, image_processor, vlm_cfg.mp_image_token_length, train_cfg.train_min_rating)
+    train_dataset = VQADataset(train_ds, tokenizer, image_processor, vlm_cfg.mp_image_token_length, train_cfg.relevance_min_rating, train_cfg.image_correspondence_min_rating, train_cfg.visual_dependency_min_rating, train_cfg.formatting_min_rating)
+    val_dataset = VQADataset(val_ds, tokenizer, image_processor, vlm_cfg.mp_image_token_length, train_cfg.relevance_min_rating, train_cfg.image_correspondence_min_rating, train_cfg.visual_dependency_min_rating, train_cfg.formatting_min_rating)
 
     train_dataset = ConstantLengthDataset(train_dataset, infinite=False, max_sample_length=train_cfg.max_sample_length, seq_length=vlm_cfg.lm_max_length, num_of_sequences=train_cfg.batch_size*4, queue_size=8,
                                         max_images_per_example=train_cfg.max_images_per_example, max_images_per_knapsack=train_cfg.max_images_per_knapsack)
@@ -474,7 +474,7 @@ def train(train_cfg, vlm_cfg):
                         save_model = model.module if is_dist() else model # unwrap the model for saving if DDP
                         save_model.save_pretrained(save_directory=checkpoint_path_step)
 
-                        if train_cfg.use_lmms_eval:
+                        if train_cfg.use_lmms_eval and global_step % (train_cfg.eval_interval*2) == 0:
                             # Submit evaluation job
                             cmd = f"sbatch eval.slurm {checkpoint_path_step} {global_step} {run_name} {train_cfg.lmms_eval_limit} {train_cfg.lmms_eval_tasks} {train_cfg.lmms_eval_batch_size}"
                             print(f"Submitting evaluation job: {cmd}")
@@ -631,7 +631,10 @@ def main():
     parser.add_argument('--resume_from_vlm_checkpoint', type=bool, default=False, help='Resume training from VLM checkpoint specified by vlm_checkpoint_path (or default if not provided)')
     parser.add_argument('--no_log_wandb', action='store_true', help='Do not log to wandb')
     parser.add_argument('--train_dataset_path', type=str, help='Train dataset path')
-    parser.add_argument('--train_min_rating', type=int, help='Minimum rating of images per sample')
+    parser.add_argument('--relevance_min_rating', type=int, help='Minimum relevance rating of images per sample')
+    parser.add_argument('--image_correspondence_min_rating', type=int, help='Minimum image correspondence rating of images per sample')
+    parser.add_argument('--visual_dependency_min_rating', type=int, help='Minimum visual dependency rating of images per sample')
+    parser.add_argument('--formatting_min_rating', type=int, help='Minimum formatting rating of images per sample')
 
     args = parser.parse_args()
 
@@ -652,8 +655,14 @@ def main():
         train_cfg.log_wandb = False
     if args.train_dataset_path is not None:
         train_cfg.train_dataset_path = args.train_dataset_path
-    if args.train_min_rating is not None:
-        train_cfg.train_min_rating = args.train_min_rating
+    if args.relevance_min_rating is not None:
+        train_cfg.relevance_min_rating = args.relevance_min_rating
+    if args.image_correspondence_min_rating is not None:
+        train_cfg.image_correspondence_min_rating = args.image_correspondence_min_rating
+    if args.visual_dependency_min_rating is not None:
+        train_cfg.visual_dependency_min_rating = args.visual_dependency_min_rating
+    if args.formatting_min_rating is not None:
+        train_cfg.formatting_min_rating = args.formatting_min_rating
 
     if args.resume_from_vlm_checkpoint and args.vlm_checkpoint_path is not None:
         train_cfg.resume_from_vlm_checkpoint = True
