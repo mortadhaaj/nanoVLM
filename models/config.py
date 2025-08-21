@@ -67,7 +67,7 @@ class TrainConfig:
     eval_in_epochs: bool = True
     eval_interval: int = 500
     stats_log_interval: int = 100
-    max_training_steps: int = 20000
+    max_training_steps: int = 20100
     max_images_per_example: int = 4
     max_images_per_knapsack: int = 18
     max_sample_length: int = 4096
