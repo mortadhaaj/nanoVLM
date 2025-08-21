@@ -25,7 +25,7 @@ uv.lock
 checkpoints/
 notebooks/
 results/
-eval_results/
+eval_results*/
 *.slurm
 !nanoVLM.slurm
 *.arrow
