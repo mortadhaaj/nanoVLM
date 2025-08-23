@@ -32,6 +32,16 @@ python plot_eval_results.py \
     --steps 300 1500 2700 3900 5100 6300 7500 8700 9900 11100 12300 13500 14700 15900 17100 18300 19500 20700 21900 23100 24300 25500 26700 27900 29100 30300 31500 32700 33900 35100 36300 37500 38700 39900
 
 #################
+# Experiments 4.c (Remove other languages)
+#################
+python plot_eval_results.py \
+    Baseline:'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_48206samples_bs512_40000_lr_vision_5e-05-language_5e-05-0.00512_0819-153841' \
+    Removed_CH:'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_46482samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0822-094301' \
+    --output remove_ch \
+    --steps 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000 11000 12000 13000 14000 15000 16000 17000 18000 19000 20000
+
+
+#################
 # Experiments 4.d) i) (Individual ratings)
 #################
 
@@ -85,15 +95,25 @@ python plot_eval_results.py \
 # Experiments 4.d) ii) (All ratings)
 # TODO: Rerun with proper setup
 #################
+# Andi's runs
 python plot_eval_results.py \
     'All_Samples':'/fsx/andi/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_39902samples_bs512_40000_lr_vision_5e-05-language_5e-05-0.00512_0812-110026' \
     '>=2':'/fsx/andi/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_39902samples_bs512_40000_lr_vision_5e-05-language_5e-05-0.00512_0813-063155' \
     '>=3':'/fsx/andi/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_39902samples_bs512_40000_lr_vision_5e-05-language_5e-05-0.00512_0812-004500' \
     '>=4':'/fsx/andi/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_39902samples_bs512_40000_lr_vision_5e-05-language_5e-05-0.00512_0812-033512' \
     '>=5':'/fsx/andi/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_39902samples_bs512_40000_lr_vision_5e-05-language_5e-05-0.00512_0815-082051' \
-    --output all_ratings
+    --output all_ratings_andi
     
     #'>=4cont':'/fsx/andi/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_39902samples_bs512_40000_lr_vision_5e-05-language_5e-05-0.00512_0813-081736' \
+
+# My runs
+python plot_eval_results.py \
+    'All_Samples':'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_48206samples_bs512_40000_lr_vision_5e-05-language_5e-05-0.00512_0819-153841' \
+    '>=2':'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_48206samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0822-075554' \
+    '>=3':'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_48206samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0822-091630' \
+    '>=4':'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_48206samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0822-083248' \
+    '>=5':'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_48206samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0822-085529' \
+    --output all_ratings_luis
 
 #################
 # Experiments 4.e) (Multiple Stages)
