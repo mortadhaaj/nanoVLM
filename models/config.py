@@ -50,7 +50,7 @@ class VLMConfig:
       "r7c1": "<row_7_col_1>", "r7c2": "<row_7_col_2>", "r7c3": "<row_7_col_3>", "r7c4": "<row_7_col_4>", "r7c5": "<row_7_col_5>", "r7c6": "<row_7_col_6>", "r7c7": "<row_7_col_7>", "r7c8": "<row_7_col_8>",
       "r8c1": "<row_8_col_1>", "r8c2": "<row_8_col_2>", "r8c3": "<row_8_col_3>", "r8c4": "<row_8_col_4>", "r8c5": "<row_8_col_5>", "r8c6": "<row_8_col_6>", "r8c7": "<row_8_col_7>", "r8c8": "<row_8_col_8>"})
     vlm_load_backbone_weights: bool = True
-    vlm_checkpoint_path: str = 'checkpoints/base/step_10000' #'checkpoints'
+    vlm_checkpoint_path: str = 'checkpoints/fv_ss_unfiltered/step_20000' #'checkpoints'
     hf_repo_name: str = 'nanoVLM'
 
 
