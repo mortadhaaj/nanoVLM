@@ -14,12 +14,11 @@ python plot_eval_results.py \
 # TODO: Rerun Cauldron, Cambrian and LLaVa
 #################
 python plot_eval_results.py \
-    Cauldron:'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_3489samples_bs512_40000_lr5e-05-0.00512_0811-092351' \
-    Cambrian:'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_13814samples_bs512_40000_lr5e-05-0.00512_0811-101603' \
-    LLaVa:'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_7726samples_bs512_40000_lr5e-05-0.00512_0811-130750' \
+    Cauldron:'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_3395samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0823-121358' \
+    Cambrian:'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_14057samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0823-113306' \
+    LLaVa:'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_7833samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0823-111329' \
     FineVision:'/fsx/luis_wiedmann/nanoVLM/eval_results/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_48206samples_bs512_40000_lr_vision_5e-05-language_5e-05-0.00512_0819-153841' \
     --output against_baselines \
-    --tasks 'mmmu_val_mmmu_acc' 'mmstar_average' 'ocrbench_ocrbench_accuracy' 'average' 'textvqa_val_exact_match'
 
 #################
 # Experiments 4.b (Internal Deduplication)
