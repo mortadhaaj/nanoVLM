@@ -50,7 +50,7 @@ class VLMConfig:
       "r7c1": "<row_7_col_1>", "r7c2": "<row_7_col_2>", "r7c3": "<row_7_col_3>", "r7c4": "<row_7_col_4>", "r7c5": "<row_7_col_5>", "r7c6": "<row_7_col_6>", "r7c7": "<row_7_col_7>", "r7c8": "<row_7_col_8>",
       "r8c1": "<row_8_col_1>", "r8c2": "<row_8_col_2>", "r8c3": "<row_8_col_3>", "r8c4": "<row_8_col_4>", "r8c5": "<row_8_col_5>", "r8c6": "<row_8_col_6>", "r8c7": "<row_8_col_7>", "r8c8": "<row_8_col_8>"})
     vlm_load_backbone_weights: bool = True
-    vlm_checkpoint_path: str = 'checkpoints'
+    vlm_checkpoint_path: str = 'checkpoints/base/step_10000' #'checkpoints'
     hf_repo_name: str = 'nanoVLM'
 
 
@@ -58,7 +58,7 @@ class VLMConfig:
 class TrainConfig:
     lr_mp: float = 0.00512
     lr_vision_backbone: float = 5e-5
-    lr_language_backbone: float = 0 #5e-5
+    lr_language_backbone: float = 5e-5
     data_cutoff_idx: int = None
     val_ratio: float = 0.005
     batch_size: int = 2
@@ -67,14 +67,14 @@ class TrainConfig:
     eval_in_epochs: bool = True
     eval_interval: int = 500
     stats_log_interval: int = 100
-    max_training_steps: int = 10100
+    max_training_steps: int = 20100
     max_images_per_example: int = 4
     max_images_per_knapsack: int = 18
     max_sample_length: int = 4096
     compile: bool = False
-    resume_from_vlm_checkpoint: bool = False # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
+    resume_from_vlm_checkpoint: bool = True # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
     train_dataset_path: str = '/fsx/luis_wiedmann/datasets/asterix_rated'
-    train_dataset_name: tuple[str, ...] = ('allava_laion', 'allava_vflan', 'cambrian(filtered)_processed', 'LLaVA_Instruct_150K', 'vision_flan(filtered)') #("all", ) #
+    train_dataset_name: tuple[str, ...] = ("all", ) #('allava_laion', 'allava_vflan', 'cambrian(filtered)_processed', 'LLaVA_Instruct_150K', 'vision_flan(filtered)') #
     relevance_min_rating: int = 1
     image_correspondence_min_rating: int = 1
     visual_dependency_min_rating: int = 1
