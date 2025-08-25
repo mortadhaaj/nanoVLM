@@ -5,6 +5,89 @@ import sys
 import glob
 import argparse
 import matplotlib.pyplot as plt
+import pandas as pd
+
+def compute_ranking_summary(all_results, tasks_to_plot):
+    """Compute ranking-based summary metric across all runs."""
+    if not all_results or len(all_results) < 2:
+        return all_results
+    
+    # Get all steps that appear in all runs
+    all_steps = set()
+    for results in all_results:
+        all_steps.update(result['step'] for result in results)
+    
+    # For each step, compute rankings
+    for step in all_steps:
+        # Find all runs that have this step
+        step_data = []
+        run_indices = []
+        
+        for run_idx, results in enumerate(all_results):
+            step_result = next((r for r in results if r['step'] == step), None)
+            if step_result:
+                step_data.append(step_result)
+                run_indices.append(run_idx)
+        
+        if len(step_data) < 2:
+            continue
+            
+        # Get metrics to rank (exclude 'average' and 'ranking_summary' from ranking calculation)
+        metrics_to_rank = []
+        if tasks_to_plot:
+            for task in tasks_to_plot:
+                if task not in ['average', 'ranking_summary'] and task in step_data[0]:
+                    metrics_to_rank.append(task)
+        else:
+            metrics_to_rank = [k for k in step_data[0].keys() if k not in ['step', 'average', 'ranking_summary']]
+        
+        if not metrics_to_rank:
+            continue
+            
+        # Compute rankings for each metric
+        rankings = []
+        for metric in metrics_to_rank:
+            # Get values for this metric across all runs at this step
+            metric_values = []
+            for data in step_data:
+                if metric in data and isinstance(data[metric], (int, float)):
+                    metric_values.append(data[metric])
+                else:
+                    metric_values.append(None)
+            
+            # Skip this metric if any run is missing it
+            if None in metric_values:
+                continue
+                
+            # Create ranking (higher value = better rank, so we rank in descending order)
+            # Convert to list of (value, original_index) pairs
+            indexed_values = [(val, idx) for idx, val in enumerate(metric_values)]
+            # Sort by value in descending order (higher is better)
+            indexed_values.sort(key=lambda x: x[0], reverse=True)
+            
+            # Assign ranks (1 is best)
+            metric_rankings = [0] * len(metric_values)
+            for rank, (_, original_idx) in enumerate(indexed_values, 1):
+                metric_rankings[original_idx] = rank
+                
+            rankings.append(metric_rankings)
+        
+        # Compute average ranking for each run
+        if rankings:
+            avg_rankings = []
+            for run_idx in range(len(step_data)):
+                run_ranks = [ranking[run_idx] for ranking in rankings]
+                avg_rankings.append(sum(run_ranks) / len(run_ranks))
+            
+            # Add ranking summary to each run's data
+            for i, (data, run_idx) in enumerate(zip(step_data, run_indices)):
+                # Find the result in the original data and add ranking summary
+                for result in all_results[run_idx]:
+                    if result['step'] == step:
+                        result['ranking_summary'] = avg_rankings[i]
+                        break
+    
+    return all_results
 
 def load_eval_results(eval_folder, tasks_to_plot=None):
     """Load all JSON files from the evaluation folder and extract results."""
@@ -34,14 +117,17 @@ def load_eval_results(eval_folder, tasks_to_plot=None):
             
             # Add average score if 'average' is in tasks
             if tasks_to_plot and 'average' in tasks_to_plot:
-                # Get only the specified tasks (excluding 'average' and MME-related metrics)
+                # Get only the specified tasks (excluding 'average')
                 metrics_to_average = []
                 for task in tasks_to_plot:
                     if (task != 'average' and 
-                        'mme' not in task.lower() and 
                         task in result and
                         isinstance(result[task], (int, float))):
-                        metrics_to_average.append(result[task])
+                        if task == 'mme_total_score':
+                            # Divide MME total score by 2000 before averaging
+                            metrics_to_average.append(result[task] / 2000)
+                        else:
+                            metrics_to_average.append(result[task])
                 
                 if metrics_to_average:
                     result['average'] = sum(metrics_to_average) / len(metrics_to_average)
@@ -151,7 +237,7 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
     plt.tight_layout()
     
     # Create assets folder if it doesn't exist
-    assets_folder = '/fsx/luis_wiedmann/nanoVLM/plots'
+    assets_folder = '/fsx/luis_wiedmann/nanoVLM/plots_ranking'
     os.makedirs(assets_folder, exist_ok=True)
     
     # Save the plot to assets folder
@@ -167,6 +253,38 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
     print(f"Plot saved to: {output_file}")
     
     plt.close()
+    
+    # Save CSV data
+    save_csv_data(all_results, eval_folders, custom_names, metric_names, output_file)
+
+def save_csv_data(all_results, eval_folders, custom_names, metric_names, output_file):
+    """Save the plot data to a CSV file."""
+    # Prepare data for CSV
+    csv_data = []
+    
+    for i, (results, eval_folder) in enumerate(zip(all_results, eval_folders)):
+        # Get the run name
+        custom_name = custom_names[i] if custom_names else None
+        run_name = get_legend_name(eval_folder, custom_name)
+        
+        for result in results:
+            step = result['step']
+            for metric in metric_names:
+                if metric in result:
+                    csv_data.append({
+                        'run': run_name,
+                        'step': step,
+                        'metric': metric,
+                        'value': result[metric]
+                    })
+    
+    # Convert to DataFrame and save
+    if csv_data:
+        df = pd.DataFrame(csv_data)
+        # Generate CSV filename from plot filename
+        csv_file = output_file.replace('.png', '.csv')
+        df.to_csv(csv_file, index=False)
+        print(f"Data saved to: {csv_file}")
 
 def parse_args():
     """Parse command line arguments supporting both folder and folder:name format."""
@@ -182,8 +300,8 @@ def parse_args():
     
     parser.add_argument('eval_folders', nargs='+',
                        help='Evaluation folder paths, optionally with custom names (folder:name)')
-    parser.add_argument('--tasks', default=['docvqa_val_anls', 'infovqa_val_anls', 'mme_total_score', 'mmmu_val_mmmu_acc', 'mmstar_average', 'ocrbench_ocrbench_accuracy', 'scienceqa_exact_match', 'textvqa_val_exact_match', 'ai2d_exact_match', 'chartqa_relaxed_overall', 'average'], nargs='+',
-                       help='Specific tasks to plot (filters metrics containing these task names)')
+    parser.add_argument('--tasks', default=['docvqa_val_anls', 'infovqa_val_anls', 'mme_total_score', 'mmmu_val_mmmu_acc', 'mmstar_average', 'ocrbench_ocrbench_accuracy', 'scienceqa_exact_match', 'textvqa_val_exact_match', 'average'], nargs='+', #'ai2d_exact_match',
+                       help='Specific tasks to plot (filters metrics containing these task names). Use "ranking_summary" for ranking-based summary metric.')
     parser.add_argument('--output', type=str,
                        help='Custom filename for the saved plot (without extension)')
     parser.add_argument('--steps', nargs='+', type=int,
@@ -213,6 +331,9 @@ def parse_args():
 
 def main():
     eval_folders, custom_names, tasks_to_plot, output_filename, steps_to_plot = parse_args()
+
+    print("---------------------------")
+    print(f"Plotting {output_filename}")
     
     # Load results from all folders
     all_results = []
@@ -252,6 +373,10 @@ def main():
             all_results.append([])
     
     if any(all_results):
+        # Compute ranking summary if requested
+        if tasks_to_plot and 'ranking_summary' in tasks_to_plot:
+            all_results = compute_ranking_summary(all_results, tasks_to_plot)
+        
         plot_results(all_results, eval_folders, custom_names, tasks_to_plot, output_filename, steps_to_plot)
     else:
         print("No evaluation results found in any folder")
