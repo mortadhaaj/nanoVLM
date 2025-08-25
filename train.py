@@ -146,7 +146,7 @@ def get_dataloaders(train_cfg, vlm_cfg):
                 print(f"Warning: Failed to load dataset shard '{dataset_name}' from '{train_cfg.train_dataset_path}'. Error: {e}")
                 continue
         try:
-            if dataset_name=='art':
+            if dataset_name in ['art', 'chinesememe', 'datik', 'wildvision', 'geoqa+(mathv360k)', 'unigeo(mathv360k)', 'ctw', 'k12_printing', 'svrd', 'tal_ocr_eng', 'est_vqa', 'text_ruozhiba']:
                 continue
             else:
                 train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name, cache_dir="/scratch/cache/")['train']
