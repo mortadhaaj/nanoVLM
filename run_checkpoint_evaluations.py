@@ -162,7 +162,8 @@ def identify_missing_evaluations(
     run_steps: Dict[str, List[int]], 
     existing_results: Dict[int, Dict[str, Set[str]]], 
     tasks: List[str],
-    specific_steps: Optional[List[int]] = None
+    specific_steps: Optional[List[int]] = None,
+    force: bool = False
 ) -> List[Tuple[int, str]]:
     """
     Identify which evaluations are missing.
@@ -172,6 +173,7 @@ def identify_missing_evaluations(
         existing_results: Existing evaluation results
         tasks: List of task names to evaluate
         specific_steps: Optional list of specific steps to evaluate
+        force: If True, ignore existing results and run all evaluations
         
     Returns:
         List of (step_number, missing_tasks_string) tuples
@@ -185,20 +187,24 @@ def identify_missing_evaluations(
             if specific_steps is not None and step not in specific_steps:
                 continue
                 
-            missing_tasks = []
-            
-            if step not in existing_results:
-                # No results exist for this step at all
-                missing_tasks = tasks_list.copy()
+            if force:
+                # Force mode: run all tasks regardless of existing results
+                missing_evaluations.append((step, ",".join(tasks_list)))
             else:
-                # Check which tasks are missing
-                existing_tasks = set(existing_results[step].keys())
-                for task in tasks_list:
-                    if task not in existing_tasks:
-                        missing_tasks.append(task)
+                missing_tasks = []
+                
+                if step not in existing_results:
+                    # No results exist for this step at all
+                    missing_tasks = tasks_list.copy()
+                else:
+                    # Check which tasks are missing
+                    existing_tasks = set(existing_results[step].keys())
+                    for task in tasks_list:
+                        if task not in existing_tasks:
+                            missing_tasks.append(task)
 
-            if missing_tasks:
-                missing_evaluations.append((step, ",".join(missing_tasks)))
+                if missing_tasks:
+                    missing_evaluations.append((step, ",".join(missing_tasks)))
 
     return missing_evaluations
 
@@ -248,7 +254,8 @@ def orchestrate_evaluations(
     eval_results_dir: str = "eval_results",
     specific_steps: Optional[List[int]] = None,
     limit: Optional[int] = None,
-    batch_size: int = 128
+    batch_size: int = 128,
+    force: bool = False
 ) -> None:
     """
     Main orchestration function for running evaluations.
@@ -260,12 +267,15 @@ def orchestrate_evaluations(
         specific_steps: Optional list of specific steps to evaluate
         limit: Optional limit for number of examples per task
         batch_size: Batch size for evaluation
+        force: If True, ignore existing results and run all evaluations
     """
     if is_master():
         print(f"Starting evaluation orchestration for: {checkpoints_dir}")
         print(f"Tasks to evaluate: {tasks}")
         if specific_steps:
             print(f"Specific steps: {specific_steps}")
+        if force:
+            print("Force mode enabled: will overwrite existing evaluations")
         
         # 1. Discover available checkpoints
         print("\n1. Discovering checkpoints...")
@@ -279,23 +289,31 @@ def orchestrate_evaluations(
             steps = run_steps[run_name]
             print(f"Found {len(steps)} checkpoint steps for {run_name}: {steps}")
             
-            # 2. Check existing evaluation results
-            print("\n2. Checking existing evaluation results...")
-            existing_results = get_existing_eval_results(eval_results_dir, run_name)
-            print(f"Found existing results for {len(existing_results)} steps")
+            # 2. Check existing evaluation results (skip if force mode)
+            if force:
+                print("\n2. Force mode: skipping existing results check")
+                existing_results = {}
+            else:
+                print("\n2. Checking existing evaluation results...")
+                existing_results = get_existing_eval_results(eval_results_dir, run_name)
+                print(f"Found existing results for {len(existing_results)} steps")
             
             # 3. Identify missing evaluations
-            print("\n3. Identifying missing evaluations...")
+            print("\n3. Identifying evaluations to run...")
             missing_evaluations = identify_missing_evaluations(
-                run_steps, existing_results, tasks, specific_steps
+                run_steps, existing_results, tasks, specific_steps, force
             )
             
             if not missing_evaluations:
-                print("No missing evaluations found! All requested evaluations are complete.")
+                if force:
+                    print("No evaluations to run!")
+                else:
+                    print("No missing evaluations found! All requested evaluations are complete.")
             else:
-                print(f"Found {len(missing_evaluations)} missing evaluations:")
-                for step, missing_tasks in missing_evaluations:
-                    print(f"  Step {step}: {missing_tasks}")
+                action = "evaluations to run" if force else "missing evaluations"
+                print(f"Found {len(missing_evaluations)} {action}:")
+                for step, tasks_to_run in missing_evaluations:
+                    print(f"  Step {step}: {tasks_to_run}")
     else:
         missing_evaluations = None
 
@@ -312,10 +330,11 @@ def orchestrate_evaluations(
         print(f"Rank {get_rank()}: No missing evaluations to run.")
         return
 
-    # 4. Run missing evaluations
-    print(f"\n4. Running missing evaluations on rank {get_rank()}...")
-    for i, (step, missing_tasks) in enumerate(missing_evaluations, 1):
-        print(f"\nRunning evaluation {i}/{len(missing_evaluations)}: Step {step}, Tasks: {missing_tasks}, Rank: {get_rank()}")
+    # 4. Run evaluations
+    action = "evaluations" if any([force]) else "missing evaluations"  
+    print(f"\n4. Running {action} on rank {get_rank()}...")
+    for i, (step, tasks_to_run) in enumerate(missing_evaluations, 1):
+        print(f"\nRunning evaluation {i}/{len(missing_evaluations)}: Step {step}, Tasks: {tasks_to_run}, Rank: {get_rank()}")
 
         checkpoint_path = os.path.join(checkpoints_dir, f"step_{step}")
         if not os.path.exists(checkpoint_path):
@@ -323,8 +342,8 @@ def orchestrate_evaluations(
             continue
         
         try:
-            # Run evaluation for missing tasks
-            results = run_evaluation(checkpoint_path, step, missing_tasks, limit, batch_size)
+            # Run evaluation for tasks
+            results = run_evaluation(checkpoint_path, step, tasks_to_run, limit, batch_size)
             print(f"✓ Completed evaluation for step {step}, Rank: {get_rank()}")
 
             # Save results
@@ -348,7 +367,8 @@ def main():
     parser.add_argument("--steps", nargs="*", type=int, help="Specific steps to evaluate")
     parser.add_argument("--limit", type=int, help="Limit number of examples per task")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size for evaluation")
-    
+    parser.add_argument("--force", action="store_true", help="Force re-run evaluations, ignoring existing results")
+
     args = parser.parse_args()
 
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
@@ -362,7 +382,8 @@ def main():
         eval_results_dir=args.eval_results_dir,
         specific_steps=args.steps,
         limit=args.limit,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        force=args.force
     )
 
     end_time = time.time()

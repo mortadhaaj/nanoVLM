@@ -279,6 +279,7 @@ def parse_eval_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, nargs='*', default=None, help="Specific steps to evaluate. If not provided, all checkpoints will be evaluated.")
     parser.add_argument("--eval_tasks", type=str, nargs='+', default=None, help="List of evaluation tasks to run.")
     parser.add_argument("--eval_results_dir", default="eval_results", help="Directory for evaluation results")
+    parser.add_argument("--force", action="store_true", help="Force re-run evaluations, ignoring existing results")
     args = parser.parse_args()
     return args
     
