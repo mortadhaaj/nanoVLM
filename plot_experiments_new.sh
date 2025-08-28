@@ -27,21 +27,21 @@ python plot_eval_results.py \
 python plot_eval_results.py \
     Cauldron:'/fsx/luis_wiedmann/nanoVLM/eval_results_new/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_3395samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0823-121358' \
     CauldronDD:'/fsx/luis_wiedmann/nanoVLM/eval_results_new/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_3489samples_bs512_40000_lr5e-05-0.00512_0811-092351' \
-    --tasks 'seedbench_seed_all' 'chartqa_relaxed_overall' 'docvqa_val_anls' 'infovqa_val_anls' 'mme_total_score' 'mmmu_val_mmmu_acc' 'mmstar_average' 'ocrbench_ocrbench_accuracy' 'scienceqa_exact_match' 'textvqa_val_exact_match' 'ai2d_exact_match' 'average' 'average_rank' \
+    --tasks 'chartqa_relaxed_overall' 'docvqa_val_anls' 'infovqa_val_anls' 'mme_total_score' 'mmmu_val_mmmu_acc' 'mmstar_average' 'ocrbench_ocrbench_accuracy' 'textvqa_val_exact_match' 'ai2d_exact_match' 'average' 'average_rank' \
     --output against_baselines/cauldron_dedup \
     --steps 300 2700 5100 7500 9900 11400 14700 17100 19500 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000 11000 12000 13000 14000 15000 16000 17000 18000 19000 20000
 
 python plot_eval_results.py \
     Cambrian:'/fsx/luis_wiedmann/nanoVLM/eval_results_new/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_14057samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0823-113306' \
     CambrianDD:'/fsx/luis_wiedmann/nanoVLM/eval_results_new/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_13814samples_bs512_40000_lr5e-05-0.00512_0811-101603' \
-    --tasks 'seedbench_seed_all' 'chartqa_relaxed_overall' 'docvqa_val_anls' 'infovqa_val_anls' 'mme_total_score' 'mmmu_val_mmmu_acc' 'mmstar_average' 'ocrbench_ocrbench_accuracy' 'scienceqa_exact_match' 'textvqa_val_exact_match' 'ai2d_exact_match' 'average' 'average_rank' \
+    --tasks 'chartqa_relaxed_overall' 'docvqa_val_anls' 'infovqa_val_anls' 'mme_total_score' 'mmmu_val_mmmu_acc' 'mmstar_average' 'ocrbench_ocrbench_accuracy' 'textvqa_val_exact_match' 'ai2d_exact_match' 'average' 'average_rank' \
     --output against_baselines/cambrian_dedup \
     --steps 300 2700 5100 7500 9900 11400 14700 17100 19500 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000 11000 12000 13000 14000 15000 16000 17000 18000 19000 20000
 
 python plot_eval_results.py \
     LLaVa:'/fsx/luis_wiedmann/nanoVLM/eval_results_new/nanoVLM_siglip2-base-patch16-512_1536_mp4_SmolLM2-360M-Instruct_32xGPU_7833samples_bs512_20100_lr_vision_5e-05-language_5e-05-0.00512_0823-111329' \
     LLaVaDD:'/fsx/luis_wiedmann/nanoVLM/eval_results_new/nanoVLM_siglip2-base-patch16-512_2048_mp4_SmolLM2-360M-Instruct_32xGPU_7726samples_bs512_40000_lr5e-05-0.00512_0811-130750' \
-    --tasks 'seedbench_seed_all' 'chartqa_relaxed_overall' 'docvqa_val_anls' 'infovqa_val_anls' 'mme_total_score' 'mmmu_val_mmmu_acc' 'mmstar_average' 'ocrbench_ocrbench_accuracy' 'scienceqa_exact_match' 'textvqa_val_exact_match' 'ai2d_exact_match' 'average' 'average_rank' \
+    --tasks 'chartqa_relaxed_overall' 'docvqa_val_anls' 'infovqa_val_anls' 'mme_total_score' 'mmmu_val_mmmu_acc' 'mmstar_average' 'ocrbench_ocrbench_accuracy' 'textvqa_val_exact_match' 'ai2d_exact_match' 'average' 'average_rank' \
     --output against_baselines/llava_dedup \
     --steps 300 2700 5100 7500 9900 11400 14700 17100 19500 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000 11000 12000 13000 14000 15000 16000 17000 18000 19000 20000
 

@@ -218,8 +218,27 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
                 legend_name = get_legend_name(eval_folder, custom_name)
                 color = colors[j % len(colors)]
                 marker = markers[j % len(markers)]
+                
+                # Check if there's stderr data for this metric
+                stderr_metric = metric + '_stderr'
+                stderr_values = []
+                for result in results:
+                    if steps_to_plot is None or result['step'] in steps_to_plot:
+                        if metric in result and stderr_metric in result:
+                            stderr_values.append(result[stderr_metric])
+                        elif metric in result:
+                            stderr_values.append(0)  # No stderr available for this step
+                
+                # Plot the main line
                 ax.plot(metric_steps, values, marker=marker, markersize=4, 
                        color=color, label=legend_name, linewidth=2, alpha=0.9)
+                
+                # Plot error corridor if stderr data is available
+                if stderr_values and any(stderr > 0 for stderr in stderr_values):
+                    lower_bounds = [v - s for v, s in zip(values, stderr_values)]
+                    upper_bounds = [v + s for v, s in zip(values, stderr_values)]
+                    ax.fill_between(metric_steps, lower_bounds, upper_bounds, 
+                                  color=color, alpha=0.2, linewidth=0)
         
         ax.set_title(metric, fontsize=13, weight='bold') #.replace('_', ' ').title()
         ax.set_xlabel('Step', fontsize=11, weight='bold')
@@ -311,8 +330,27 @@ def save_individual_plot_pdf(all_results, eval_folders, custom_names, output_fil
             legend_name = get_legend_name(eval_folder, custom_name)
             color = colors[j % len(colors)]
             marker = markers[j % len(markers)]
+            
+            # Check if there's stderr data for this metric
+            stderr_metric = metric_name + '_stderr'
+            stderr_values = []
+            for result in results:
+                if steps_to_plot is None or result['step'] in steps_to_plot:
+                    if metric_name in result and stderr_metric in result:
+                        stderr_values.append(result[stderr_metric])
+                    elif metric_name in result:
+                        stderr_values.append(0)  # No stderr available for this step
+            
+            # Plot the main line
             plt.plot(metric_steps, values, marker=marker, markersize=6, 
                    color=color, label=legend_name, linewidth=2.5, alpha=0.9)
+            
+            # Plot error corridor if stderr data is available
+            if stderr_values and any(stderr > 0 for stderr in stderr_values):
+                lower_bounds = [v - s for v, s in zip(values, stderr_values)]
+                upper_bounds = [v + s for v, s in zip(values, stderr_values)]
+                plt.fill_between(metric_steps, lower_bounds, upper_bounds, 
+                              color=color, alpha=0.2, linewidth=0)
     
     # Configure the plot
     plt.xlabel('Training Step (×1000)', fontsize=13, weight='bold')
