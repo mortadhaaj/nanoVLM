@@ -76,8 +76,8 @@ class TrainConfig:
     train_dataset_path: str = '/fsx/luis_wiedmann/datasets/asterix_rated'
     train_dataset_name: tuple[str, ...] = ("all", ) #('allava_laion', 'allava_vflan', 'cambrian(filtered)_processed', 'LLaVA_Instruct_150K', 'vision_flan(filtered)') #
     relevance_min_rating: int = 1
-    image_correspondence_min_rating: int = 2
-    visual_dependency_min_rating: int = 2
+    image_correspondence_min_rating: int = 1
+    visual_dependency_min_rating: int = 1
     formatting_min_rating: int = 1
     wandb_entity: str = "HuggingFace" # Indicate the entity to log to in wandb
     log_wandb: bool = True
