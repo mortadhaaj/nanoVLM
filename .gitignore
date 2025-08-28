@@ -31,3 +31,4 @@ eval_results*/
 *.arrow
 /shards/*
 *.png
+plots*/

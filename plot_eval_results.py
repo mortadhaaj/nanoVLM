@@ -32,14 +32,14 @@ def compute_ranking_summary(all_results, tasks_to_plot):
         if len(step_data) < 2:
             continue
             
-        # Get metrics to rank (exclude 'average' and 'ranking_summary' from ranking calculation)
+        # Get metrics to rank (exclude 'average' and 'average_rank' from ranking calculation)
         metrics_to_rank = []
         if tasks_to_plot:
             for task in tasks_to_plot:
-                if task not in ['average', 'ranking_summary'] and task in step_data[0]:
+                if task not in ['average', 'average_rank'] and task in step_data[0]:
                     metrics_to_rank.append(task)
         else:
-            metrics_to_rank = [k for k in step_data[0].keys() if k not in ['step', 'average', 'ranking_summary']]
+            metrics_to_rank = [k for k in step_data[0].keys() if k not in ['step', 'average', 'average_rank']]
         
         if not metrics_to_rank:
             continue
@@ -84,7 +84,7 @@ def compute_ranking_summary(all_results, tasks_to_plot):
                 # Find the result in the original data and add ranking summary
                 for result in all_results[run_idx]:
                     if result['step'] == step:
-                        result['ranking_summary'] = avg_rankings[i]
+                        result['average_rank'] = avg_rankings[i]
                         break
     
     return all_results
@@ -121,13 +121,10 @@ def load_eval_results(eval_folder, tasks_to_plot=None):
                 metrics_to_average = []
                 for task in tasks_to_plot:
                     if (task != 'average' and 
+                        'mme' not in task.lower() and 
                         task in result and
                         isinstance(result[task], (int, float))):
-                        if task == 'mme_total_score':
-                            # Divide MME total score by 2000 before averaging
-                            metrics_to_average.append(result[task] / 2000)
-                        else:
-                            metrics_to_average.append(result[task])
+                        metrics_to_average.append(result[task])
                 
                 if metrics_to_average:
                     result['average'] = sum(metrics_to_average) / len(metrics_to_average)
@@ -149,6 +146,11 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
     """Plot the evaluation results for multiple folders."""
     if not all_results:
         return
+    
+    # Set academic style
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['font.size'] = 12
+    plt.rcParams['mathtext.fontset'] = 'cm'
     
     # Extract all metric names from all results
     metric_names = set()
@@ -180,8 +182,9 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
     if n_rows == 1:
         axes = axes.reshape(1, -1)
     
-    # Define colors for different runs
-    colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+    # Define academic colors and markers for different runs
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    markers = ['o', 's', '^', 'D', 'v', 'p', '*', 'h', '+', 'x']
     
     for i, metric in enumerate(metric_names):
         row = i // n_cols
@@ -214,15 +217,28 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
                 custom_name = custom_names[j] if custom_names else None
                 legend_name = get_legend_name(eval_folder, custom_name)
                 color = colors[j % len(colors)]
-                ax.plot(metric_steps, values, marker='o', markersize=2, 
-                       color=color, label=legend_name)
+                marker = markers[j % len(markers)]
+                ax.plot(metric_steps, values, marker=marker, markersize=4, 
+                       color=color, label=legend_name, linewidth=2, alpha=0.9)
         
-        ax.set_title(metric.replace('_', ' ').title())
-        ax.set_xlabel('Step')
-        ax.set_ylabel('Value')
-        ax.grid(True, alpha=0.3)
+        ax.set_title(metric, fontsize=13, weight='bold') #.replace('_', ' ').title()
+        ax.set_xlabel('Step', fontsize=11, weight='bold')
+        ax.set_ylabel('Value', fontsize=11, weight='bold')
+        ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
+        
+        # Invert y-axis for ranking metrics (lower rank = better performance)
+        if 'rank' in metric.lower():
+            ax.invert_yaxis()
+        
+        # Add subtle background and improve spines
+        ax.set_facecolor('#fafafa')
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.2)
+            spine.set_color('#333333')
+        
         if len(eval_folders) > 1:
-            ax.legend()
+            ax.legend(loc='upper left', frameon=True, fancybox=True, shadow=False,
+                     framealpha=0.9, edgecolor='gray', fontsize=10)
     
     # Hide unused subplots
     for i in range(n_metrics, n_rows * n_cols):
@@ -230,32 +246,140 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
         col = i % n_cols
         axes[row, col].set_visible(False)
     
-    # Add title if output filename is specified
-    if output_filename:
-        plt.suptitle(output_filename, fontsize=16, y=0.98)
+    # # Add title if output filename is specified
+    # if output_filename:
+    #     plt.suptitle(output_filename, fontsize=16, y=0.98)
     
     plt.tight_layout()
     
     # Create assets folder if it doesn't exist
-    assets_folder = '/fsx/luis_wiedmann/nanoVLM/plots_ranking'
+    assets_folder = '/fsx/luis_wiedmann/nanoVLM/plots_new'
     os.makedirs(assets_folder, exist_ok=True)
     
     # Save the plot to assets folder
     if output_filename:
-        output_file = os.path.join(assets_folder, f'{output_filename}.png')
+        output_file = os.path.join(assets_folder, f'{output_filename}.pdf')
     elif len(eval_folders) == 1:
         folder_name = os.path.basename(eval_folders[0])
-        output_file = os.path.join(assets_folder, f'{folder_name}_evaluation_plots.png')
+        output_file = os.path.join(assets_folder, f'{folder_name}_evaluation_plots.pdf')
     else:
-        output_file = os.path.join(assets_folder, 'comparison_evaluation_plots.png')
+        output_file = os.path.join(assets_folder, 'comparison_evaluation_plots.pdf')
     
-    plt.savefig(output_file, dpi=150, bbox_inches='tight')
+    plt.savefig(output_file, format='pdf', dpi=600, bbox_inches='tight')
     print(f"Plot saved to: {output_file}")
     
     plt.close()
     
+    # Save individual plots as PDFs for specified metrics
+    individual_plots = ['average_rank']  # Add more metrics here as needed
+    for metric in individual_plots:
+        if metric in metric_names:
+            save_individual_plot_pdf(all_results, eval_folders, custom_names, output_filename, metric, steps_to_plot)
+    
     # Save CSV data
     save_csv_data(all_results, eval_folders, custom_names, metric_names, output_file)
+
+def save_individual_plot_pdf(all_results, eval_folders, custom_names, output_filename, metric_name, steps_to_plot=None):
+    """Save an individual metric plot as a PDF with 300 DPI and no title."""
+    # Set academic style
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams['font.size'] = 12
+    plt.rcParams['mathtext.fontset'] = 'cm'
+    
+    # Create a new figure with golden ratio proportions
+    #plt.figure(figsize=(10, 6.18))
+    
+    # Define academic colors and markers
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    markers = ['o', 's', '^', 'D', 'v', 'p', '*', 'h', '+', 'x']
+    
+    # Plot each run for the specified metric
+    for j, (results, eval_folder) in enumerate(zip(all_results, eval_folders)):
+        # Extract values for this metric
+        values = []
+        metric_steps = []
+        
+        for result in results:
+            # Check if we should include this step
+            if steps_to_plot is None or result['step'] in steps_to_plot:
+                if metric_name in result:
+                    values.append(result[metric_name])
+                    metric_steps.append(result['step'])
+        
+        if values:
+            custom_name = custom_names[j] if custom_names else None
+            legend_name = get_legend_name(eval_folder, custom_name)
+            color = colors[j % len(colors)]
+            marker = markers[j % len(markers)]
+            plt.plot(metric_steps, values, marker=marker, markersize=6, 
+                   color=color, label=legend_name, linewidth=2.5, alpha=0.9)
+    
+    # Configure the plot
+    plt.xlabel('Training Step (×1000)', fontsize=13, weight='bold')
+    plt.ylabel(metric_name.replace('_', ' ').title(), fontsize=13, weight='bold')
+    plt.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
+    
+    # Set x-axis limits from 1000 to last datapoint with slight margins
+    all_steps = []
+    for results in all_results:
+        for result in results:
+            # Only include steps that match our filter and have the metric
+            if (steps_to_plot is None or result['step'] in steps_to_plot) and metric_name in result:
+                all_steps.append(result['step'])
+    
+    if all_steps:
+        min_step = 1000
+        max_step = max(all_steps)
+        x_margin = (max_step - min_step) * 0.02  # 2% margin
+        plt.xlim(min_step - x_margin, max_step + x_margin)
+        # Set x-axis ticks to show simple integers (steps divided by 1000)
+        unique_steps = sorted(set(all_steps))
+        plt.xticks(unique_steps, [int(step/1000) for step in unique_steps])
+    
+    # Invert y-axis for ranking metrics (lower rank = better performance)
+    if 'rank' in metric_name.lower():
+        plt.gca().invert_yaxis()
+        # Set y-axis limits from 1 to number of runs with slight margins
+        y_margin = 0.1
+        plt.ylim(len(eval_folders) + y_margin, 1 - y_margin)
+    
+    # Add legend if multiple runs
+    if len(eval_folders) > 1:
+        plt.legend(loc='upper left', frameon=True, fancybox=True, shadow=False, 
+                  framealpha=0.9, edgecolor='gray', fontsize=11)
+    
+    # Add subtle background and improve spines
+    ax = plt.gca()
+    ax.set_facecolor('#fafafa')
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.2)
+        spine.set_color('#333333')
+    
+    plt.tight_layout(pad=1.5)
+    
+    # Create assets folder if it doesn't exist
+    assets_folder = '/fsx/luis_wiedmann/nanoVLM/plots_new'
+    os.makedirs(assets_folder, exist_ok=True)
+    
+    # Generate filename for individual plot PDF
+    if output_filename:
+        pdf_file = os.path.join(assets_folder, f'{output_filename}_{metric_name}.pdf')
+    elif len(eval_folders) == 1:
+        folder_name = os.path.basename(eval_folders[0])
+        pdf_file = os.path.join(assets_folder, f'{folder_name}_{metric_name}.pdf')
+    else:
+        pdf_file = os.path.join(assets_folder, f'comparison_{metric_name}.pdf')
+    
+    # Save as PDF with 300 DPI
+    plt.savefig(pdf_file, format='pdf', dpi=300, bbox_inches='tight')
+    print(f"Individual plot for '{metric_name}' saved to: {pdf_file}")
+    
+    # Also save as PNG
+    png_file = pdf_file.replace('.pdf', '.png')
+    plt.savefig(png_file, format='png', dpi=300, bbox_inches='tight')
+    print(f"Individual plot for '{metric_name}' saved to: {png_file}")
+    
+    plt.close()
 
 def save_csv_data(all_results, eval_folders, custom_names, metric_names, output_file):
     """Save the plot data to a CSV file."""
@@ -282,7 +406,7 @@ def save_csv_data(all_results, eval_folders, custom_names, metric_names, output_
     if csv_data:
         df = pd.DataFrame(csv_data)
         # Generate CSV filename from plot filename
-        csv_file = output_file.replace('.png', '.csv')
+        csv_file = output_file.replace('.pdf', '.csv')
         df.to_csv(csv_file, index=False)
         print(f"Data saved to: {csv_file}")
 
@@ -301,7 +425,7 @@ def parse_args():
     parser.add_argument('eval_folders', nargs='+',
                        help='Evaluation folder paths, optionally with custom names (folder:name)')
     parser.add_argument('--tasks', default=['docvqa_val_anls', 'infovqa_val_anls', 'mme_total_score', 'mmmu_val_mmmu_acc', 'mmstar_average', 'ocrbench_ocrbench_accuracy', 'scienceqa_exact_match', 'textvqa_val_exact_match', 'average'], nargs='+', #'ai2d_exact_match',
-                       help='Specific tasks to plot (filters metrics containing these task names). Use "ranking_summary" for ranking-based summary metric.')
+                       help='Specific tasks to plot (filters metrics containing these task names). Use "average_rank" for ranking-based summary metric.')
     parser.add_argument('--output', type=str,
                        help='Custom filename for the saved plot (without extension)')
     parser.add_argument('--steps', nargs='+', type=int,
@@ -360,7 +484,7 @@ def main():
                 
                 missing_tasks = []
                 for task in tasks_to_plot:
-                    if task not in available_metrics:
+                    if task not in available_metrics and task not in ['average', 'average_rank']:
                         missing_tasks.append(task)
                 
                 if missing_tasks:
@@ -374,7 +498,7 @@ def main():
     
     if any(all_results):
         # Compute ranking summary if requested
-        if tasks_to_plot and 'ranking_summary' in tasks_to_plot:
+        if tasks_to_plot and 'average_rank' in tasks_to_plot:
             all_results = compute_ranking_summary(all_results, tasks_to_plot)
         
         plot_results(all_results, eval_folders, custom_names, tasks_to_plot, output_filename, steps_to_plot)
