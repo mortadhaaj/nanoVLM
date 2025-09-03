@@ -122,6 +122,7 @@ def load_eval_results(eval_folder, tasks_to_plot=None):
                 for task in tasks_to_plot:
                     if (task != 'average' and 
                         'mme' not in task.lower() and 
+                        'rank' not in task.lower() and
                         task in result and
                         isinstance(result[task], (int, float))):
                         metrics_to_average.append(result[task])
@@ -151,6 +152,23 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
     plt.rcParams['font.family'] = 'serif'
     plt.rcParams['font.size'] = 12
     plt.rcParams['mathtext.fontset'] = 'cm'
+    
+    # Mapping from metric names to display titles
+    metric_title_mapping = {
+        'docvqa_val_anls': 'DocVQA',
+        'infovqa_val_anls': 'InfoVQA',
+        'mme_total_score': 'MME Total',
+        'mmmu_val_mmmu_acc': 'MMMU',
+        'mmstar_average': 'MMStar',
+        'ocrbench_ocrbench_accuracy': 'OCRBench',
+        'scienceqa_exact_match': 'ScienceQA',
+        'textvqa_val_exact_match': 'TextVQA',
+        'average': 'Average (excl. MME)',
+        'average_rank': 'Average Rank',
+        'ai2d_exact_match': 'AI2D',
+        'chartqa_relaxed_overall': 'ChartQA',
+        'seedbench_seed_all': 'SeedBench'
+    }
     
     # Extract all metric names from all results
     metric_names = set()
@@ -240,10 +258,27 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
                     ax.fill_between(metric_steps, lower_bounds, upper_bounds, 
                                   color=color, alpha=0.2, linewidth=0)
         
-        ax.set_title(metric, fontsize=13, weight='bold') #.replace('_', ' ').title()
-        ax.set_xlabel('Step', fontsize=11, weight='bold')
+        # Get display title from mapping, fallback to original metric name
+        display_title = metric_title_mapping.get(metric, metric)
+        ax.set_title(display_title, fontsize=13, weight='bold')
+        ax.set_xlabel('Training Step (×1000)', fontsize=10, weight='bold')
         ax.set_ylabel('Value', fontsize=11, weight='bold')
         ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
+        
+        # Set x-axis ticks to show simple integers (steps divided by 1000)
+        # Get all steps for this metric across all runs
+        all_metric_steps = []
+        for results in all_results:
+            for result in results:
+                if (steps_to_plot is None or result['step'] in steps_to_plot) and metric in result:
+                    all_metric_steps.append(result['step'])
+        
+        if all_metric_steps:
+            unique_steps = sorted(set(all_metric_steps))
+            ax.set_xticks(unique_steps)
+            # Show only every second label to avoid crowding
+            labels = [int(step/1000) if i % 2 == 0 else '' for i, step in enumerate(unique_steps)]
+            ax.set_xticklabels(labels)
         
         # Invert y-axis for ranking metrics (lower rank = better performance)
         if 'rank' in metric.lower():
@@ -272,7 +307,7 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
     plt.tight_layout()
     
     # Create assets folder if it doesn't exist
-    assets_folder = '/fsx/luis_wiedmann/nanoVLM/plots_new'
+    assets_folder = '/fsx/luis_wiedmann/nanoVLM/plots_final'
     os.makedirs(assets_folder, exist_ok=True)
     
     # Save the plot to assets folder
@@ -296,7 +331,7 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
             save_individual_plot_pdf(all_results, eval_folders, custom_names, output_filename, metric, steps_to_plot)
     
     # Save CSV data
-    save_csv_data(all_results, eval_folders, custom_names, metric_names, output_file)
+    save_csv_data(all_results, eval_folders, custom_names, metric_names, output_file, steps_to_plot)
 
 def save_individual_plot_pdf(all_results, eval_folders, custom_names, output_filename, metric_name, steps_to_plot=None):
     """Save an individual metric plot as a PDF with 300 DPI and no title."""
@@ -396,7 +431,7 @@ def save_individual_plot_pdf(all_results, eval_folders, custom_names, output_fil
     plt.tight_layout(pad=1.5)
     
     # Create assets folder if it doesn't exist
-    assets_folder = '/fsx/luis_wiedmann/nanoVLM/plots_new'
+    assets_folder = '/fsx/luis_wiedmann/nanoVLM/plots_final'
     os.makedirs(assets_folder, exist_ok=True)
     
     # Generate filename for individual plot PDF
@@ -419,7 +454,7 @@ def save_individual_plot_pdf(all_results, eval_folders, custom_names, output_fil
     
     plt.close()
 
-def save_csv_data(all_results, eval_folders, custom_names, metric_names, output_file):
+def save_csv_data(all_results, eval_folders, custom_names, metric_names, output_file, steps_to_plot=None):
     """Save the plot data to a CSV file."""
     # Prepare data for CSV
     csv_data = []
@@ -431,14 +466,23 @@ def save_csv_data(all_results, eval_folders, custom_names, metric_names, output_
         
         for result in results:
             step = result['step']
-            for metric in metric_names:
-                if metric in result:
-                    csv_data.append({
-                        'run': run_name,
-                        'step': step,
-                        'metric': metric,
-                        'value': result[metric]
-                    })
+            # Only include steps that are plotted
+            if steps_to_plot is None or step in steps_to_plot:
+                for metric in metric_names:
+                    if metric in result:
+                        row_data = {
+                            'run': run_name,
+                            'step': step,
+                            'metric': metric,
+                            'value': result[metric]
+                        }
+                        
+                        # Add stderr if available
+                        stderr_metric = metric + '_stderr'
+                        if stderr_metric in result:
+                            row_data['stderr'] = result[stderr_metric]
+                        
+                        csv_data.append(row_data)
     
     # Convert to DataFrame and save
     if csv_data:
