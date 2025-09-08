@@ -7,6 +7,22 @@ import argparse
 import matplotlib.pyplot as plt
 import pandas as pd
 
+METRIC_TITLE_MAPPING = {
+        'docvqa_val_anls': 'DocVQA',
+        'infovqa_val_anls': 'InfoVQA',
+        'mme_total_score': 'MME Total',
+        'mmmu_val_mmmu_acc': 'MMMU',
+        'mmstar_average': 'MMStar',
+        'ocrbench_ocrbench_accuracy': 'OCRBench',
+        'scienceqa_exact_match': 'ScienceQA',
+        'textvqa_val_exact_match': 'TextVQA',
+        'average': 'Average',
+        'average_rank': 'Average Rank',
+        'ai2d_exact_match': 'AI2D',
+        'chartqa_relaxed_overall': 'ChartQA',
+        'seedbench_seed_all': 'SeedBench'
+    }
+
 def compute_ranking_summary(all_results, tasks_to_plot):
     """Compute ranking-based summary metric across all runs."""
     if not all_results or len(all_results) < 2:
@@ -121,11 +137,15 @@ def load_eval_results(eval_folder, tasks_to_plot=None):
                 metrics_to_average = []
                 for task in tasks_to_plot:
                     if (task != 'average' and 
-                        'mme' not in task.lower() and 
                         'rank' not in task.lower() and
                         task in result and
                         isinstance(result[task], (int, float))):
-                        metrics_to_average.append(result[task])
+                        # Special handling for MME total score: normalize by dividing by 2800
+                        if task == 'mme_total_score':
+                            normalized_score = result[task] / 2800.0
+                            metrics_to_average.append(normalized_score)
+                        else:
+                            metrics_to_average.append(result[task])
                 
                 if metrics_to_average:
                     result['average'] = sum(metrics_to_average) / len(metrics_to_average)
@@ -154,21 +174,6 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
     plt.rcParams['mathtext.fontset'] = 'cm'
     
     # Mapping from metric names to display titles
-    metric_title_mapping = {
-        'docvqa_val_anls': 'DocVQA',
-        'infovqa_val_anls': 'InfoVQA',
-        'mme_total_score': 'MME Total',
-        'mmmu_val_mmmu_acc': 'MMMU',
-        'mmstar_average': 'MMStar',
-        'ocrbench_ocrbench_accuracy': 'OCRBench',
-        'scienceqa_exact_match': 'ScienceQA',
-        'textvqa_val_exact_match': 'TextVQA',
-        'average': 'Average (excl. MME)',
-        'average_rank': 'Average Rank',
-        'ai2d_exact_match': 'AI2D',
-        'chartqa_relaxed_overall': 'ChartQA',
-        'seedbench_seed_all': 'SeedBench'
-    }
     
     # Extract all metric names from all results
     metric_names = set()
@@ -259,7 +264,7 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
                                   color=color, alpha=0.2, linewidth=0)
         
         # Get display title from mapping, fallback to original metric name
-        display_title = metric_title_mapping.get(metric, metric)
+        display_title = METRIC_TITLE_MAPPING.get(metric, metric)
         ax.set_title(display_title, fontsize=13, weight='bold')
         ax.set_xlabel('Training Step (×1000)', fontsize=10, weight='bold')
         ax.set_ylabel('Value', fontsize=11, weight='bold')
@@ -325,7 +330,7 @@ def plot_results(all_results, eval_folders, custom_names=None, tasks_to_plot=Non
     plt.close()
     
     # Save individual plots as PDFs for specified metrics
-    individual_plots = ['average_rank']  # Add more metrics here as needed
+    individual_plots = ['average_rank', 'average']  # Add more metrics here as needed
     for metric in individual_plots:
         if metric in metric_names:
             save_individual_plot_pdf(all_results, eval_folders, custom_names, output_filename, metric, steps_to_plot)
@@ -389,7 +394,8 @@ def save_individual_plot_pdf(all_results, eval_folders, custom_names, output_fil
     
     # Configure the plot
     plt.xlabel('Training Step (×1000)', fontsize=13, weight='bold')
-    plt.ylabel(metric_name.replace('_', ' ').title(), fontsize=13, weight='bold')
+    display_title = METRIC_TITLE_MAPPING.get(metric_name, metric_name)
+    plt.ylabel(display_title, fontsize=13, weight='bold')
     plt.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
     
     # Set x-axis limits from 1000 to last datapoint with slight margins
@@ -407,6 +413,7 @@ def save_individual_plot_pdf(all_results, eval_folders, custom_names, output_fil
         plt.xlim(min_step - x_margin, max_step + x_margin)
         # Set x-axis ticks to show simple integers (steps divided by 1000)
         unique_steps = sorted(set(all_steps))
+        #unique_steps = [i for i in range(1000, 60000, 4000)]
         plt.xticks(unique_steps, [int(step/1000) for step in unique_steps])
     
     # Invert y-axis for ranking metrics (lower rank = better performance)
