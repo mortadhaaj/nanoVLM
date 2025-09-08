@@ -7,6 +7,8 @@ import torch
 # torch.multiprocessing.set_start_method("spawn", force=True)
 # torch.multiprocessing.set_sharing_strategy("file_system")   # prevents FD/resource_sharer issues
 
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 import wandb
 import numpy
 import random
@@ -283,6 +285,7 @@ def train(train_cfg, vlm_cfg):
 
     # Initialize model
     if train_cfg.resume_from_vlm_checkpoint:
+        print(f"Resuming from VLM checkpoint: {vlm_cfg.vlm_checkpoint_path}")
         model = VisionLanguageModel.from_pretrained(vlm_cfg.vlm_checkpoint_path)
     else:
         model = VisionLanguageModel(vlm_cfg, load_backbone=vlm_cfg.vlm_load_backbone_weights)

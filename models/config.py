@@ -27,17 +27,17 @@ class VLMConfig:
     lm_dropout: float = 0.0
     lm_n_blocks: int = 32
     lm_attn_scaling: float = 1.0
-    lm_max_length: int = 4096
+    lm_max_length: int = 8192
     lm_use_tokens: bool = False # Decide if the LM expects tokens or embeddings as input (if using as a backbone for the VLM, set to False)
     lm_tie_weights: bool = True # Decide if you want to tie the LM Head weight to the token embedding weights
-    lm_model_type: str = 'HuggingFaceTB/SmolLM2-360M-Instruct'
+    lm_model_type: str = 'HuggingFaceTB/SmolLM2-360M-Instruct' #'HuggingFaceTB/SmolLM2-135M' #
     lm_tokenizer: str = 'HuggingFaceTB/SmolLM2-360M-Instruct'
     lm_chat_template: str = "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
 
     mp_pixel_shuffle_factor: int = 4
     mp_image_token_length: int = 64
 
-    max_img_size: int = 2048 #1536
+    max_img_size: int = 2048
     resize_to_max_side_len: bool = True
 
     vlm_extra_tokens: dict[str, str] = field(default_factory=lambda: {"image_token": "<|image|>", "global_image_token": "<|global_image|>",
@@ -57,24 +57,24 @@ class VLMConfig:
 @dataclass
 class TrainConfig:
     lr_mp: float = 0.00512
-    lr_vision_backbone: float = 5e-5
-    lr_language_backbone: float = 5e-5
+    lr_vision_backbone: float = 5e-5 #0.0005 #
+    lr_language_backbone: float = 0 #5e-5
     data_cutoff_idx: int = None
     val_ratio: float = 0.005
-    batch_size: int = 2
+    batch_size: int = 1
     gradient_accumulation_steps: int = 8
     max_grad_norm: float = 1.0
     eval_in_epochs: bool = True
     eval_interval: int = 500
     stats_log_interval: int = 100
-    max_training_steps: int = 50100
-    max_images_per_example: int = 4
-    max_images_per_knapsack: int = 18
-    max_sample_length: int = 4096
+    max_training_steps: int = 20100
+    max_images_per_example: int = 8
+    max_images_per_knapsack: int = 36
+    max_sample_length: int = 8192
     compile: bool = False
     resume_from_vlm_checkpoint: bool = False # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
     train_dataset_path: str = '/fsx/luis_wiedmann/datasets/asterix_rated'
-    train_dataset_name: tuple[str, ...] = ("all", ) #('allava_laion', 'allava_vflan', 'cambrian(filtered)_processed', 'LLaVA_Instruct_150K', 'vision_flan(filtered)') #
+    train_dataset_name: tuple[str, ...] = ('allava_laion', 'allava_vflan', 'cambrian(filtered)_processed', 'LLaVA_Instruct_150K', 'vision_flan(filtered)', 'mmevol', 'lvis_instruct4v', 'sharegpt4o', 'sharegpt4v(coco)', 'sharegpt4v(knowledge)', 'sharegpt4v(llava)', 'sharegpt4v(sam)') #("all", ) #
     relevance_min_rating: int = 1
     image_correspondence_min_rating: int = 1
     visual_dependency_min_rating: int = 1
