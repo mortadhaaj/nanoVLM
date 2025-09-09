@@ -26,8 +26,6 @@ checkpoints/
 notebooks/
 results/
 eval_results*/
-*.slurm
-!nanoVLM.slurm
 *.arrow
 /shards/*
 *.png
