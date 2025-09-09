@@ -72,7 +72,7 @@ class TrainConfig:
     max_images_per_knapsack: int = 36
     max_sample_length: int = 8192
     compile: bool = False
-    resume_from_vlm_checkpoint: bool = True # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
+    resume_from_vlm_checkpoint: bool = False # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
     train_dataset_path: str = '/fsx/luis_wiedmann/datasets/asterix_rated'
     train_dataset_name: tuple[str, ...] = ("all", ) #('allava_laion', 'allava_vflan', 'cambrian(filtered)_processed', 'LLaVA_Instruct_150K', 'mmevol', 'sharegpt4o', 'sharegpt4v(coco)', 'sharegpt4v(knowledge)', 'sharegpt4v(llava)', 'sharegpt4v(sam)') # 'vision_flan(filtered)', 'lvis_instruct4v',
     relevance_min_rating: int = 1
