@@ -18,7 +18,7 @@ def parse_args():
         help="Path to a local checkpoint (directory or safetensors/pth). If omitted, we pull from HF."
     )
     parser.add_argument(
-        "--hf_model", type=str, default="lusxvr/nanoVLM-450M",
+        "--hf_model", type=str, default="lusxvr/nanoVLM-460M",
         help="HuggingFace repo ID to download from incase --checkpoint isnt set."
     )
     parser.add_argument("--image", type=str, default="assets/image.png",
@@ -48,8 +48,13 @@ def main():
     model = VisionLanguageModel.from_pretrained(source).to(device)
     model.eval()
 
-    tokenizer = get_tokenizer(model.cfg.lm_tokenizer, model.cfg.vlm_extra_tokens)
-    image_processor = get_image_processor(model.cfg.max_img_size, model.cfg.vit_img_size)
+    # Get tokenizer and image processor from model config if not provided
+    tokenizer = get_tokenizer(model.cfg.lm_tokenizer, model.cfg.vlm_extra_tokens, model.cfg.lm_chat_template)
+    resize_to_max_side_len = False
+    if hasattr(model.cfg, "resize_to_max_side_len"):
+        resize_to_max_side_len = model.cfg.resize_to_max_side_len
+    print(f"Resize to max side len: {resize_to_max_side_len}")
+    image_processor = get_image_processor(model.cfg.max_img_size, model.cfg.vit_img_size, resize_to_max_side_len)
 
     img = Image.open(args.image).convert("RGB")
     processed_image, splitted_image_ratio = image_processor(img)
