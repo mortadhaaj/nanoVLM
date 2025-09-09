@@ -14,7 +14,12 @@
 ---
 
 > [!NOTE]
-> We have pushed some breaking changes to the repository on June 4. To enable us to do smarter packing, we refactored the way image and text embeddings are combined. To keep everything as smooth as possible, we have trained a new nanoVLM-450M with this new pipeline, while leaving the old nanoVLM-222M compatible with the old pipeline If you clone this repository now or pull the updated to your local machine, the default will be the new 450M Model. If you would like a simpler understanding and a simpler codebase, you can use the v0.1 release. This works out of the box with the old 222M model.
+> We have pushed some more breaking changes on September 9, 2025. These are all the updates to use image splitting and train on multiple nodes. This was used for the ablations of the FineVision release. Some things in the codebase regarding support scripts (eg. the notebook, or memory evals) are propably not working anymore. Similarly to the older trained versions of nanoVLM (similarly to Note below). If you find something that doesn't work anymore please let us know in the Issues or submit a PR!
+
+---
+
+> [!NOTE]
+> We have pushed some breaking changes to the repository on June 4, 2025. To enable us to do smarter packing, we refactored the way image and text embeddings are combined. To keep everything as smooth as possible, we have trained a new nanoVLM-450M with this new pipeline, while leaving the old nanoVLM-222M compatible with the old pipeline If you clone this repository now or pull the updated to your local machine, the default will be the new 450M Model. If you would like a simpler understanding and a simpler codebase, you can use the v0.1 release. This works out of the box with the old 222M model.
 
 ---
 
