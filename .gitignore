@@ -25,7 +25,8 @@ uv.lock
 checkpoints/
 notebooks/
 results/
-*.slurm
+eval_results*/
 *.arrow
 /shards/*
 *.png
+plots*/

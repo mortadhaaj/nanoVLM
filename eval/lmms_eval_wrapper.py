@@ -48,12 +48,16 @@ class NanoVLMWrapper(lmms):
         
         # Get tokenizer and image processor from model config if not provided
         self.tokenizer = get_tokenizer(self.model.cfg.lm_tokenizer, self.model.cfg.vlm_extra_tokens, self.model.cfg.lm_chat_template)
-        self.image_processor = get_image_processor(self.model.cfg.max_img_size, self.model.cfg.vit_img_size)
+        resize_to_max_side_len = False
+        if hasattr(self.model.cfg, "resize_to_max_side_len"):
+            resize_to_max_side_len = self.model.cfg.resize_to_max_side_len
+        print(f"Resize to max side len: {resize_to_max_side_len}")
+        self.image_processor = get_image_processor(self.model.cfg.max_img_size, self.model.cfg.vit_img_size, resize_to_max_side_len)
             
     def _prepare_visual_input(self, visual_list: List[Image.Image]) -> Optional[torch.Tensor]:
         """Convert visual inputs to model format."""
         if not visual_list or visual_list[0] is None: # Still check if the list is empty or contains None
-            return None
+            return None, None
             
         images = []
         splitted_image_ratios = []
@@ -71,12 +75,16 @@ class NanoVLMWrapper(lmms):
             
             # Process image
             processed_images, splitted_image_ratio = self.image_processor(image)
+            if not hasattr(self.tokenizer, "global_image_token") and splitted_image_ratio[0]*splitted_image_ratio[1] == len(processed_images) - 1:
+                # If the tokenizer doesn't have a global image token, but the processor generated it, remove it
+                processed_images = processed_images[1:]
+
             images.append(processed_images)
             splitted_image_ratios.append(splitted_image_ratio)
         
         if images:
             return images, splitted_image_ratios
-        return None
+        return None, None
         
     def loglikelihood(self, requests: List[Instance]) -> List[Tuple[float, bool]]:
         raise NotImplementedError("Loglikelihood is not implemented for nanoVLM")
@@ -84,9 +92,117 @@ class NanoVLMWrapper(lmms):
     def flatten(self, input):
         new_list = []
         for sublist in input:
-            for i in sublist:
-                new_list.append(i)
+            if sublist is None:
+                new_list.append(None)
+            else:
+                for i in sublist:
+                    new_list.append(i)
         return new_list
+    
+    def get_benchmark_formatting(self, task_name: str) -> dict:
+        """Get benchmark-specific formatting rules."""
+        benchmark_formats = {
+            ("ai2d", "mmstar", "seedbench", "scienceqa"): { #   
+                "text_replacements": {
+                    "\nOptions:": "\nChoices:",
+                    "\nA. ": "\nChoices:\nA. ",
+                    "Please select the correct answer from the options above.": "Answer with the letter.",
+                    "Answer with the option's letter from the given choices directly": "Answer with the letter directly",
+                },
+                "assistant_prefix": "Answer:",
+                "user_prefix": "",
+                "user_suffix": ""
+            },
+            "docvqa_val": {
+                "text_replacements": {},
+                "assistant_prefix": "",
+                "user_prefix": "Give a short and terse answer to the following question. "
+                                + "Do not paraphrase or reformat the text you see in the image. Do not include any full stops. "
+                                + "Just give the answer without additional explanation. Question: ",
+                "user_suffix": ""
+            },
+            "chartvqa": {
+                "text_replacements": {},
+                "assistant_prefix": "",
+                "user_prefix": "For the question below, follow the following instructions:\n"
+                                + "-The answer should contain as few words as possible.\n"
+                                + "-Don't paraphrase or reformat the text you see in the image.\n"
+                                + "-Answer a binary question with Yes or No.\n"
+                                + "-When asked to give a numerical value, provide a number like 2 instead of Two.\n"
+                                + "-If the final answer has two or more items, provide it in the list format like [1, 2].\n"
+                                + "-When asked to give a ratio, give out the decimal value like 0.25 instead of 1:4.\n"
+                                + "-When asked to give a percentage, give out the whole value like 17 instead of decimal like 0.17%.\n"
+                                + "-Don't include any units in the answer.\n"
+                                + "-Do not include any full stops at the end of the answer.\n"
+                                + "-Try to include the full label from the graph when asked about an entity.\n"
+                                + "Question: ",
+                "user_suffix": ""
+            },
+            "textvqa_val": {
+                "text_replacements": {},
+                "assistant_prefix": "",
+                "user_prefix": "Answer the following question about the image using as few words as possible. "
+                                + "Follow these additional instructions:\n"
+                                + "-Always answer a binary question with Yes or No.\n"
+                                + "-When asked what time it is, reply with the time seen in the image.\n"
+                                + "-Do not put any full stops at the end of the answer.\n"
+                                + "-Do not put quotation marks around the answer.\n"
+                                + "-An answer with one or two words is favorable.\n"
+                                + "-Do not apply common sense knowledge. The answer can be found in the image.\n"
+                                + "Question: ",
+                "user_suffix": ""
+            },
+            "mmmu_val": {
+                "text_replacements": {
+                    "Question:": "",
+                    "Answer with the option's letter from the given choices directly.": "Answer with the letter directly.",
+                    "\nA. ": "\nChoices:\nA. "
+                },
+                "assistant_prefix": "Answer:",
+                "user_prefix": "",
+                "user_suffix": ""
+            },
+            ("infovqa_val", "mme", "ocrbench"): {
+                "text_replacements": {},
+                "assistant_prefix": "",
+                "user_prefix": "",
+                "user_suffix": "\nGive a very brief answer."
+            }
+        }
+        
+        # Check individual task names first
+        if task_name in benchmark_formats:
+            return benchmark_formats[task_name]
+        
+        # Check if task is in any list/tuple keys
+        for key, formatting in benchmark_formats.items():
+            if isinstance(key, (list, tuple)) and task_name in key:
+                return formatting
+        
+        # Default formatting
+        return {"text_replacements": {}, "assistant_prefix": "", "user_prefix": "", "user_suffix": ""}
+    
+    def apply_benchmark_formatting(self, context_str: str, prompt: str, task_name: str) -> tuple[str, str]:
+        """Apply benchmark-specific formatting to context and prompt."""
+        formatting = self.get_benchmark_formatting(task_name)
+        
+        # Add user prefix to context
+        if formatting["user_prefix"]:
+            context_str = formatting["user_prefix"] + context_str
+        
+        # Apply text replacements to context
+        for old_text, new_text in formatting["text_replacements"].items():
+            context_str = context_str.replace(old_text, new_text)
+        
+        # Add user suffix to context
+        if formatting["user_suffix"]:
+            context_str = context_str + formatting["user_suffix"]
+        
+        # Add assistant prefix to prompt
+        if formatting["assistant_prefix"]:
+            prompt = prompt + formatting["assistant_prefix"]
+        
+        return context_str, prompt
     
     def generate_until(self, requests: List[Instance]) -> List[str]:
         res = []
@@ -116,7 +232,14 @@ class NanoVLMWrapper(lmms):
             splitted_image_idx = 0
             for i in range(len(contexts)):
                 current_context_str = contexts[i]
-                image_count = len(visuals[i])
+                
+                # Apply benchmark-specific text replacements
+                current_context_str, _ = self.apply_benchmark_formatting(current_context_str, "", task[i])
+                
+                if visuals[i] is None:
+                    image_count = 0
+                else:
+                    image_count = len(visuals[i])
                 image_string = ""
                 for _ in range(image_count):
                     image_string += get_image_string(self.tokenizer, [splitted_image_ratio[splitted_image_idx]], self.model.cfg.mp_image_token_length)
@@ -133,6 +256,20 @@ class NanoVLMWrapper(lmms):
                 # images.append(processed_images_tensor)
                 
             prompts = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            pr = False
+            if pr:
+                print(task[0])
+                print("Original Prompt")
+                print(prompts[0])
+
+            # Apply benchmark-specific assistant prefixes
+            for i in range(len(prompts)):
+                _, prompts[i] = self.apply_benchmark_formatting("", prompts[i], task[i])
+
+            if pr:
+                print("Formatted Prompt")
+                print(prompts[0])
+
             inputs = self.tokenizer(
                 prompts,
                 return_tensors="pt",
@@ -176,6 +313,8 @@ class NanoVLMWrapper(lmms):
                 generated_ids_batch,
                 skip_special_tokens=True
             )
+            if pr:
+                print(generated_texts[0])
             res.extend(generated_texts)
             pbar.update(len(contexts))
 

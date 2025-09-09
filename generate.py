@@ -7,7 +7,7 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(0)
 
 from models.vision_language_model import VisionLanguageModel
-from data.processors import get_tokenizer, get_image_processor
+from data.processors import get_tokenizer, get_image_processor, get_image_string
 
 
 def parse_args():
@@ -18,7 +18,7 @@ def parse_args():
         help="Path to a local checkpoint (directory or safetensors/pth). If omitted, we pull from HF."
     )
     parser.add_argument(
-        "--hf_model", type=str, default="lusxvr/nanoVLM-450M",
+        "--hf_model", type=str, default="lusxvr/nanoVLM-460M",
         help="HuggingFace repo ID to download from incase --checkpoint isnt set."
     )
     parser.add_argument("--image", type=str, default="assets/image.png",
@@ -48,14 +48,23 @@ def main():
     model = VisionLanguageModel.from_pretrained(source).to(device)
     model.eval()
 
-    tokenizer = get_tokenizer(model.cfg.lm_tokenizer, model.cfg.vlm_extra_tokens)
-    image_processor = get_image_processor(model.cfg.max_img_size, model.cfg.vit_img_size)
+    # Get tokenizer and image processor from model config if not provided
+    tokenizer = get_tokenizer(model.cfg.lm_tokenizer, model.cfg.vlm_extra_tokens, model.cfg.lm_chat_template)
+    resize_to_max_side_len = False
+    if hasattr(model.cfg, "resize_to_max_side_len"):
+        resize_to_max_side_len = model.cfg.resize_to_max_side_len
+    print(f"Resize to max side len: {resize_to_max_side_len}")
+    image_processor = get_image_processor(model.cfg.max_img_size, model.cfg.vit_img_size, resize_to_max_side_len)
 
     img = Image.open(args.image).convert("RGB")
-    processed_image, splittedimage_count = image_processor(img)
-    vit_patch_size = splittedimage_count[0] * splittedimage_count[1]
+    processed_image, splitted_image_ratio = image_processor(img)
+    if not hasattr(tokenizer, "global_image_token") and splitted_image_ratio[0]*splitted_image_ratio[1] == len(processed_image) - 1:
+        # If the tokenizer doesn't have a global image token, but the processor generated it, remove it
+        processed_image = processed_image[1:]
 
-    messages = [{"role": "user", "content": tokenizer.image_token * model.cfg.mp_image_token_length * vit_patch_size + args.prompt}]
+    image_string = get_image_string(tokenizer, [splitted_image_ratio], model.cfg.mp_image_token_length)
+
+    messages = [{"role": "user", "content": image_string + args.prompt}]
     encoded_prompt = tokenizer.apply_chat_template([messages], tokenize=True, add_generation_prompt=True)
     tokens = torch.tensor(encoded_prompt).to(device)
     img_t = processed_image.to(device)

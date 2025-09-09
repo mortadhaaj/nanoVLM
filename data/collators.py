@@ -11,12 +11,24 @@ class BaseCollator(object):
         batch["attention_mask"] = [torch.nn.functional.pad(attention_mask, (max_length - len(attention_mask), 0), value=0) for attention_mask in batch["attention_mask"]]
 
     def prepare_batch(self, batch, max_length=None):
+        # 1) Handle empty
+        if not batch:
+            return {"input_ids": [], "labels": [], "attention_mask": [], "images": []}
+
+        # 2) Drop None rows
+        batch = [s for s in batch if s is not None]
+        if not batch:
+            return {"input_ids": [], "labels": [], "attention_mask": [], "images": []}
+
         # batch is a list of dicts, each containing "input_ids", "attention_mask", "labels", "images"
         # let's convert it to a dict of lists of tensors
         batch = {k: [item[k] for item in batch] for k in batch[0]}
 
         if max_length is not None:
             batch = self._discard_samples_that_are_too_long(batch, max_length)
+
+        if len(batch["input_ids"]) == 0:
+            return batch
 
         # Pad samples to max length
         if max_length is not None:
@@ -39,7 +51,7 @@ class BaseCollator(object):
             if len(ids) <= max_length
         ]
         if not filtered:
-            return [], [], [], []
+            return {"input_ids": [], "labels": [], "attention_mask": [], "images": []}
         batch_token_ids, batch_labels, batch_attentions, batch_images = zip(*filtered)
         return {"input_ids": list(batch_token_ids), "labels": list(batch_labels), "attention_mask": list(batch_attentions), "images": list(batch_images)}
 
