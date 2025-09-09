@@ -1,3 +1,5 @@
+### Only works in nanoVLM/ directory
+
 import argparse
 import time
 import os
