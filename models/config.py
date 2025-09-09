@@ -58,7 +58,7 @@ class VLMConfig:
 class TrainConfig:
     lr_mp: float = 0.00512
     lr_vision_backbone: float = 5e-5 #0.0005 #
-    lr_language_backbone: float = 0 #5e-5
+    lr_language_backbone: float = 5e-5 #0
     data_cutoff_idx: int = None
     val_ratio: float = 0.005
     batch_size: int = 1
@@ -67,14 +67,14 @@ class TrainConfig:
     eval_in_epochs: bool = True
     eval_interval: int = 500
     stats_log_interval: int = 100
-    max_training_steps: int = 20100
+    max_training_steps: int = 80100
     max_images_per_example: int = 8
     max_images_per_knapsack: int = 36
     max_sample_length: int = 8192
     compile: bool = False
-    resume_from_vlm_checkpoint: bool = False # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
+    resume_from_vlm_checkpoint: bool = True # Indicate if the training should be resumed from a checkpoint of the whole VLM or you want to start from scratch
     train_dataset_path: str = '/fsx/luis_wiedmann/datasets/asterix_rated'
-    train_dataset_name: tuple[str, ...] = ('allava_laion', 'allava_vflan', 'cambrian(filtered)_processed', 'LLaVA_Instruct_150K', 'vision_flan(filtered)', 'mmevol', 'lvis_instruct4v', 'sharegpt4o', 'sharegpt4v(coco)', 'sharegpt4v(knowledge)', 'sharegpt4v(llava)', 'sharegpt4v(sam)') #("all", ) #
+    train_dataset_name: tuple[str, ...] = ("all", ) #('allava_laion', 'allava_vflan', 'cambrian(filtered)_processed', 'LLaVA_Instruct_150K', 'mmevol', 'sharegpt4o', 'sharegpt4v(coco)', 'sharegpt4v(knowledge)', 'sharegpt4v(llava)', 'sharegpt4v(sam)') # 'vision_flan(filtered)', 'lvis_instruct4v',
     relevance_min_rating: int = 1
     image_correspondence_min_rating: int = 1
     visual_dependency_min_rating: int = 1
