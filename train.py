@@ -1,14 +1,7 @@
+import os
 import math
 import time
-import os
-# os.environ['TMPDIR'] = '/scratch'
-# os.environ['TORCH_SHARING_DIR'] = '/scratch'
 import torch
-# torch.multiprocessing.set_start_method("spawn", force=True)
-# torch.multiprocessing.set_sharing_strategy("file_system")   # prevents FD/resource_sharer issues
-
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-
 import wandb
 import numpy
 import random
@@ -18,13 +11,11 @@ import subprocess
 import torch.optim as optim
 from statistics import mean
 from dataclasses import asdict
-from datasets import load_dataset, concatenate_datasets, get_dataset_config_names, load_from_disk
-from torch.utils.data import DataLoader, DistributedSampler
+from datetime import timedelta
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
-from datetime import timedelta
-from huggingface_hub import list_repo_files
-from datasets.distributed import split_dataset_by_node
+from torch.utils.data import DataLoader, DistributedSampler
+from datasets import load_dataset, concatenate_datasets, get_dataset_config_names, load_from_disk
 
 torch.manual_seed(0)
 if torch.cuda.is_available():
@@ -32,19 +23,19 @@ if torch.cuda.is_available():
 
 PG_CPU = None
 
-from data.collators import VQACollator
 from data.datasets import VQADataset
-from data.advanced_datasets import ConstantLengthDataset
-# from data.advanced_parallel_datasets import ParallelConstantLengthDataset
-from data.processors import get_image_processor, get_tokenizer
-from models.vision_language_model import VisionLanguageModel
-import models.config as config
-import models.utils as utils
+from data.collators import VQACollator
 from data.data_utils import synchronized_dataloader_step
+from data.advanced_datasets import ConstantLengthDataset
+from data.processors import get_image_processor, get_tokenizer
+
+import models.config as config
+from models.vision_language_model import VisionLanguageModel
 
 #Otherwise, the tokenizer will throw a warning
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 import warnings
 warnings.filterwarnings("ignore", message=".*Length of IterableDataset.*")
@@ -148,14 +139,9 @@ def get_dataloaders(train_cfg, vlm_cfg):
                 print(f"Warning: Failed to load dataset shard '{dataset_name}' from '{train_cfg.train_dataset_path}'. Error: {e}")
                 continue
         try:
-            if dataset_name in ['art']: #, 'chinesememe', 'datik', 'wildvision', 'geoqa+(mathv360k)', 'unigeo(mathv360k)', 'ctw', 'k12_printing', 'svrd', 'tal_ocr_eng', 'est_vqa', 'text_ruozhiba'
-                continue
-            else:
-                train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name, cache_dir="/scratch/cache/")['train']
-                train_ds[0] # Check if the dataset is loaded correctly
-                # if len(train_ds) > 1000000:  # Sample first 1M samples to reduce unbalance between datasets
-                    # train_ds = train_ds.select(range(1000000))
-                combined_train_data.append(train_ds)
+            train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name)['train']
+            train_ds[0] # Check if the dataset is loaded correctly
+            combined_train_data.append(train_ds)
         except Exception as e:
             if is_master():
                 print(f"Warning: Failed to load dataset config '{dataset_name}' from '{train_cfg.train_dataset_path}'. Error: {e}")
