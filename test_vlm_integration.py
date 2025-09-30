@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -24,7 +25,8 @@ import torch
 import torch.nn as nn
 
 # Import existing components
-from models.vision_language_model import VisionLanguageModel
+# from models.vision_language_model import VisionLanguageModel
+from models.granite_docling_vlm import GraniteDoclingVLM as VisionLanguageModel
 from models.config import VLMConfig, TrainConfig
 from data.processors import get_tokenizer, get_image_processor
 
@@ -143,18 +145,38 @@ class VLMIntegrationTester:
             batch_size = 2
             seq_len = 100
 
-            # Create dummy training batch (similar to train.py)
-            input_ids = torch.randint(0, cfg.lm_vocab_size, (batch_size, seq_len)).to(self.device)
-            images = [torch.randn(1, 3, cfg.vit_img_size, cfg.vit_img_size).to(self.device) for _ in range(batch_size)]
+            # Create dummy training batch (MUST match train.py format)
+            # CRITICAL: input_ids must contain image_token_id placeholders!
+            input_ids = torch.randint(0, cfg.lm_vocab_size - 100, (batch_size, seq_len)).to(self.device)
+
+            # Insert image tokens at specific positions
+            # Each image needs cfg.mp_image_token_length tokens (default: 64)
+            image_token_id = model.tokenizer.image_token_id
+            num_image_tokens_per_image = cfg.mp_image_token_length
+
+            # Insert image token placeholders for first sample (1 image = 64 tokens)
+            input_ids[0, 10:10+num_image_tokens_per_image] = image_token_id
+            # Insert image token placeholders for second sample (1 image = 64 tokens)
+            input_ids[1, 15:15+num_image_tokens_per_image] = image_token_id
+
+            # Images format: list of lists, where each inner list contains processed image tensors
+            # In train.py: images = batch["images"] where batch is from collator
+            # Collator returns: "images": batch["images"] (list of lists)
+            images = [
+                [torch.randn(1, 3, cfg.vit_img_size, cfg.vit_img_size).to(self.device)],  # First sample: 1 image
+                [torch.randn(1, 3, cfg.vit_img_size, cfg.vit_img_size).to(self.device)]   # Second sample: 1 image
+            ]
+
             attention_mask = torch.ones(batch_size, seq_len).to(self.device)
             targets = torch.randint(0, cfg.lm_vocab_size, (batch_size, seq_len)).to(self.device)
             targets[:, :50] = -100  # Mask first 50 tokens (like in training)
 
             self._log(f"  Input shape: {input_ids.shape}")
-            self._log(f"  Images: {len(images)} images")
+            self._log(f"  Images: {len(images)} samples, each with {[len(img_list) for img_list in images]} images")
+            self._log(f"  Image tokens per image: {num_image_tokens_per_image}")
             self._log(f"  Targets shape: {targets.shape}")
 
-            # Forward pass
+            # Forward pass (exactly like train.py line 382)
             logits, loss = model(input_ids, images, attention_mask=attention_mask, targets=targets)
 
             # Validate outputs
@@ -172,7 +194,9 @@ class VLMIntegrationTester:
                 "output_shape": list(logits.shape),
                 "loss_value": f"{loss.item():.4f}",
                 "loss_finite": torch.isfinite(loss).item(),
-                "output_dtype": str(logits.dtype)
+                "output_dtype": str(logits.dtype),
+                "image_token_id": int(image_token_id),
+                "num_image_tokens_inserted": int(num_image_tokens_per_image * batch_size)
             }
 
             self._log(f"  Output shape: {details['output_shape']}")
@@ -210,10 +234,18 @@ class VLMIntegrationTester:
             if missing_gen_params:
                 raise ValueError(f"Generate missing parameters: {missing_gen_params}")
 
-            # Test generation
+            # Test generation - MUST include image tokens in input_ids!
             batch_size = 1
-            seq_len = 20
-            input_ids = torch.randint(0, cfg.lm_vocab_size, (batch_size, seq_len)).to(self.device)
+            seq_len = 80  # Need enough space for image tokens (64) + text
+            input_ids = torch.randint(0, cfg.lm_vocab_size - 100, (batch_size, seq_len)).to(self.device)
+
+            # Insert image token placeholders
+            image_token_id = model.tokenizer.image_token_id
+            num_image_tokens_per_image = cfg.mp_image_token_length
+            input_ids[0, 5:5+num_image_tokens_per_image] = image_token_id
+
+            # In generate.py, images is the output from image_processor which returns a tensor
+            # The model's generate accepts either a tensor or list format
             images = torch.randn(batch_size, 3, cfg.vit_img_size, cfg.vit_img_size).to(self.device)
 
             with torch.no_grad():
@@ -226,7 +258,9 @@ class VLMIntegrationTester:
                 "generate_signature": str(sig),
                 "input_length": seq_len,
                 "generated_length": generated.shape[1],
-                "output_shape": list(generated.shape)
+                "output_shape": list(generated.shape),
+                "image_token_id": int(image_token_id),
+                "num_image_tokens": int(num_image_tokens_per_image)
             }
 
             self._log(f"  Generate signature: {sig}")
@@ -249,17 +283,25 @@ class VLMIntegrationTester:
         try:
             model.train()
 
-            # Create dummy batch
+            # Create dummy batch (same format as train.py)
             batch_size = 1
-            seq_len = 50
-            input_ids = torch.randint(0, cfg.lm_vocab_size, (batch_size, seq_len)).to(self.device)
-            images = [torch.randn(1, 3, cfg.vit_img_size, cfg.vit_img_size).to(self.device)]
+            seq_len = 80  # Need enough space for image tokens
+            input_ids = torch.randint(0, cfg.lm_vocab_size - 100, (batch_size, seq_len)).to(self.device)
+
+            # CRITICAL: Insert image token placeholders!
+            image_token_id = model.tokenizer.image_token_id
+            num_image_tokens_per_image = cfg.mp_image_token_length
+            input_ids[0, 5:5+num_image_tokens_per_image] = image_token_id
+
+            # Images format: list of lists (matching train.py)
+            images = [[torch.randn(1, 3, cfg.vit_img_size, cfg.vit_img_size).to(self.device)]]
+
             attention_mask = torch.ones(batch_size, seq_len).to(self.device)
             targets = torch.randint(0, cfg.lm_vocab_size, (batch_size, seq_len)).to(self.device)
-            targets[:, :25] = -100
+            targets[:, :40] = -100  # Mask first 40 tokens
 
-            # Forward pass
-            logits, loss = model(input_ids, images, attention_mask=attention_mask, targets=targets)
+            # Forward pass (exactly like train.py line 382)
+            _, loss = model(input_ids, images, attention_mask=attention_mask, targets=targets)
 
             # Backward pass
             loss.backward()
@@ -285,7 +327,8 @@ class VLMIntegrationTester:
                 "loss_value": f"{loss.item():.4f}",
                 "params_with_grads": len(has_grads),
                 "params_without_grads": len(no_grads),
-                "gradient_flow": "OK" if has_grads else "FAIL"
+                "gradient_flow": "OK" if has_grads else "FAIL",
+                "image_tokens_inserted": int(num_image_tokens_per_image)
             }
 
             self._log(f"  Parameters with gradients: {len(has_grads)}")
@@ -480,7 +523,58 @@ class VLMIntegrationTester:
         success_rate = (passed_tests / total_tests * 100) if total_tests > 0 else 0
         self._log(f"\nSuccess Rate: {success_rate:.1f}%")
 
+        # Add environment info
+        self.results["environment"] = {
+            "python_version": sys.version,
+            "pytorch_version": torch.__version__,
+            "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
+            "cuda_available": torch.cuda.is_available(),
+        }
+
         return passed_tests == total_tests
+
+    def save_results(self, output_path="integration_test_results.json"):
+        """Save test results to JSON file"""
+        try:
+            with open(output_path, "w") as f:
+                json.dump(self.results, f, indent=2)
+            self._log(f"\n💾 Results saved to: {output_path}")
+        except Exception as e:
+            self._log(f"Failed to save results: {e}", "ERROR")
+
+    def update_modifications_log(self, log_path="MODIFICATIONS_LOG.md"):
+        """Update the modifications log with test results"""
+        if not Path(log_path).exists():
+            self._log(f"Warning: {log_path} not found, skipping log update", "WARN")
+            return
+
+        try:
+            # Generate markdown summary
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            summary = f"\n### Integration Test Run - {timestamp}\n"
+            summary += f"- **Device**: {self.device}\n"
+            summary += f"- **PyTorch**: {torch.__version__}\n"
+
+            # Calculate status
+            total = len(self.results["tests"])
+            passed = sum(1 for t in self.results["tests"].values() if t["passed"])
+            status = "✅ All Passed" if passed == total else f"⚠️ {passed}/{total} Passed"
+            summary += f"- **Status**: {status}\n\n"
+
+            summary += "**Test Results**:\n"
+            for test_name, result in self.results["tests"].items():
+                status_icon = "✅" if result["passed"] else "❌"
+                summary += f"- {status_icon} {test_name.replace('_', ' ').title()}\n"
+                if not result["passed"] and result.get("error"):
+                    summary += f"  - Error: `{result['error']}`\n"
+
+            # Append to log
+            with open(log_path, "a") as f:
+                f.write("\n" + "---" + "\n" + summary)
+
+            self._log(f"📝 Updated modifications log: {log_path}")
+        except Exception as e:
+            self._log(f"Failed to update log: {e}", "ERROR")
 
 
 def main():
@@ -489,6 +583,10 @@ def main():
                        help="Only test config compatibility")
     parser.add_argument("--quiet", action="store_true",
                        help="Suppress verbose output")
+    parser.add_argument("--output", type=str, default="integration_test_results.json",
+                       help="Output JSON file for results")
+    parser.add_argument("--no-log-update", action="store_true",
+                       help="Don't update MODIFICATIONS_LOG.md")
 
     args = parser.parse_args()
 
@@ -498,10 +596,19 @@ def main():
     if args.config_only:
         # Just test config
         success, _, _ = tester.test_config_compatibility()
+        tester.save_results(args.output)
         sys.exit(0 if success else 1)
     else:
         # Run all tests
         success = tester.run_all_tests()
+
+        # Save results
+        tester.save_results(args.output)
+
+        # Update log
+        if not args.no_log_update:
+            tester.update_modifications_log()
+
         sys.exit(0 if success else 1)
 
 

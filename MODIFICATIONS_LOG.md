@@ -50,10 +50,41 @@
 - **Type**: Infrastructure
 - **Files Changed**:
   - `MODIFICATIONS_LOG.md` (new)
-  - `test_compatibility.py` (new)
+  - `test_vlm_integration.py` (new)
 - **Description**: Created comprehensive logging and testing infrastructure
 - **Compatibility Impact**: None - no model changes
 - **Testing Required**: None
+- **Git Commit**: Pending
+
+### Modification #2 - Granite Docling VLM Integration (2025-09-30)
+- **Type**: Model Addition
+- **Files Changed**:
+  - `models/granite_docling_vlm.py` (new)
+  - `test_granite_docling.py` (new)
+- **Description**: Integrated IBM Granite Docling 258M VLM as an alternative model
+- **Model Details**:
+  - **Architecture**: Idefics3 (Vision Transformer + LLaMA connector)
+  - **Vision Encoder**: 12 layers, 768d, patch_size=16, img_size=512
+  - **Language Model**: LLaMA with 30 layers, 576d hidden, 9 attention heads, 3 KV heads
+  - **Total Parameters**: ~258M
+  - **Checkpoint**: `ibm-granite/granite-docling-258M`
+  - **Special Use Case**: Document understanding and layout analysis
+- **Key Differences from nanoVLM**:
+  - Uses Idefics3Model from transformers (all-in-one vision+text)
+  - Different input format: `pixel_values` + `image_grid_thw` instead of images list
+  - Native support for document-specific tasks
+  - Different tokenizer with 100K+ vocab
+- **Compatibility Impact**:
+  - New model class, does not affect existing nanoVLM
+  - Can coexist with original VisionLanguageModel
+  - Different forward signature (not directly compatible with train.py without adapter)
+- **Testing Required**:
+  - ✅ Model loading from checkpoint
+  - ✅ Forward pass with dummy inputs
+  - ✅ Generation with real document image
+  - ✅ Backward pass for training
+  - ⏳ Integration with train.py (requires adapter)
+  - ⏳ Integration with generate.py (requires adapter)
 - **Git Commit**: Pending
 
 ---
@@ -208,3 +239,116 @@
 
 **Last Updated**: 2025-09-30
 **Next Review**: After first modification
+---
+
+### Integration Test Run - 2025-09-30 14:58:38
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ⚠️ 0/1 Passed
+
+**Test Results**:
+- ❌ Config Compatibility
+  - Error: `'VLMConfig' object has no attribute 'to_idefics3_config'`
+
+---
+
+### Integration Test Run - 2025-09-30 15:15:04
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ⚠️ 0/1 Passed
+
+**Test Results**:
+- ❌ Config Compatibility
+  - Error: `Missing required attributes: ['vision_encoder', 'decoder', 'MP']`
+
+---
+
+### Integration Test Run - 2025-09-30 15:16:27
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ⚠️ 5/8 Passed
+
+**Test Results**:
+- ✅ Config Compatibility
+- ✅ Forward Signature
+- ❌ Forward Pass Training
+  - Error: `'NoneType' object has no attribute 'image_token_id'`
+- ❌ Generate Method
+  - Error: `'NoneType' object has no attribute 'image_token_id'`
+- ❌ Backward Pass
+  - Error: `'NoneType' object has no attribute 'image_token_id'`
+- ✅ Save Load Methods
+- ✅ Tokenizer Compatibility
+- ✅ Train Config Compatibility
+
+---
+
+### Integration Test Run - 2025-09-30 15:18:16
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ⚠️ 5/8 Passed
+
+**Test Results**:
+- ✅ Config Compatibility
+- ✅ Forward Signature
+- ❌ Forward Pass Training
+  - Error: `'NoneType' object has no attribute 'image_token_id'`
+- ❌ Generate Method
+  - Error: `'NoneType' object has no attribute 'image_token_id'`
+- ❌ Backward Pass
+  - Error: `'NoneType' object has no attribute 'image_token_id'`
+- ✅ Save Load Methods
+- ✅ Tokenizer Compatibility
+- ✅ Train Config Compatibility
+
+---
+
+### Integration Test Run - 2025-09-30 15:21:10
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ⚠️ 7/8 Passed
+
+**Test Results**:
+- ✅ Config Compatibility
+- ✅ Forward Signature
+- ✅ Forward Pass Training
+- ❌ Generate Method
+  - Error: `not enough values to unpack (expected 5, got 4)`
+- ✅ Backward Pass
+- ✅ Save Load Methods
+- ✅ Tokenizer Compatibility
+- ✅ Train Config Compatibility
+
+---
+
+### Integration Test Run - 2025-09-30 15:27:41
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ✅ All Passed
+
+**Test Results**:
+- ✅ Config Compatibility
+- ✅ Forward Signature
+- ✅ Forward Pass Training
+- ✅ Generate Method
+- ✅ Backward Pass
+- ✅ Save Load Methods
+- ✅ Tokenizer Compatibility
+- ✅ Train Config Compatibility
+
+---
+
+### Integration Test Run - 2025-09-30 15:37:33
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ✅ All Passed
+
+**Test Results**:
+- ✅ Config Compatibility
+- ✅ Forward Signature
+- ✅ Forward Pass Training
+- ✅ Generate Method
+- ✅ Backward Pass
+- ✅ Save Load Methods
+- ✅ Tokenizer Compatibility
+- ✅ Train Config Compatibility
