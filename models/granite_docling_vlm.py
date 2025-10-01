@@ -272,42 +272,67 @@ class GraniteDoclingVLM(nn.Module):
         if is_nested:
             # Each element is a list of images for that sample
             # images = [[img1_s0, img2_s0], [img1_s1], [img1_s2, img2_s2, img3_s2]]
+            # For Idefics3: flatten all patches from all images into [B, total_patches, C, H, W]
             batch_size = len(images)
-            max_images_per_sample = max(len(sample_images) for sample_images in images)
 
-            # Get image dimensions from first image
-            first_img = images[0][0]
-            if first_img.dim() == 3:  # [C, H, W]
-                C, H, W = first_img.shape
-            elif first_img.dim() == 4:  # [1, C, H, W]
-                _, C, H, W = first_img.shape
-            else:
-                raise ValueError(f"Unexpected image tensor shape: {first_img.shape}")
+            # Collect all patches for each sample
+            batch_pixel_values = []
+            batch_image_grid = []
 
-            # Initialize output tensors
+            for sample_idx, sample_images in enumerate(images):
+                sample_patches = []
+                sample_grids = []
+
+                for img_tensor in sample_images:
+                    # Handle different formats
+                    if img_tensor.dim() == 3:  # [C, H, W]
+                        # Single patch
+                        sample_patches.append(img_tensor.unsqueeze(0))  # [1, C, H, W]
+                        sample_grids.append(torch.tensor([[1, 1, img_tensor.shape[-1]]]))
+                    elif img_tensor.dim() == 4:
+                        if img_tensor.shape[0] == 1:
+                            # [1, C, H, W] - single patch with batch dim
+                            sample_patches.append(img_tensor)
+                            sample_grids.append(torch.tensor([[1, 1, img_tensor.shape[-1]]]))
+                        else:
+                            # [num_patches, C, H, W] - Idefics3 format with multiple patches
+                            sample_patches.append(img_tensor)
+                            # Grid info
+                            n_patches = img_tensor.shape[0]
+                            grid_size = int(n_patches ** 0.5)
+                            sample_grids.append(torch.tensor([[grid_size, grid_size, img_tensor.shape[-1]]]))
+
+                # Concatenate all patches for this sample
+                if sample_patches:
+                    all_patches = torch.cat(sample_patches, dim=0)  # [total_patches_in_sample, C, H, W]
+                    all_grids = torch.cat(sample_grids, dim=0)      # [num_images, 3]
+                else:
+                    # No images for this sample - create dummy
+                    all_patches = torch.zeros(1, 3, 512, 512, dtype=torch.float32)
+                    all_grids = torch.zeros(1, 3, dtype=torch.long)
+
+                batch_pixel_values.append(all_patches)
+                batch_image_grid.append(all_grids)
+
+            # Pad to max patches in batch
+            max_patches = max(pv.shape[0] for pv in batch_pixel_values)
+            C, H, W = batch_pixel_values[0].shape[1:]
+
             pixel_values = torch.zeros(
-                batch_size, max_images_per_sample, C, H, W,
-                dtype=first_img.dtype, device=device
+                batch_size, max_patches, C, H, W,
+                dtype=batch_pixel_values[0].dtype, device=device
             )
+            max_images = max(grid.shape[0] for grid in batch_image_grid)
             image_grid_thw = torch.zeros(
-                batch_size, max_images_per_sample, 3,
+                batch_size, max_images, 3,
                 dtype=torch.long, device=device
             )
 
-            # Fill in images for each sample
-            for sample_idx, sample_images in enumerate(images):
-                for img_idx, img_tensor in enumerate(sample_images):
-                    # Handle both [C, H, W] and [1, C, H, W]
-                    if img_tensor.dim() == 3:
-                        img_tensor = img_tensor.unsqueeze(0)  # [1, C, H, W]
-
-                    # Extract single image: [C, H, W]
-                    img_tensor = img_tensor.squeeze(0) if img_tensor.shape[0] == 1 else img_tensor
-
-                    pixel_values[sample_idx, img_idx] = img_tensor.to(device)
-                    image_grid_thw[sample_idx, img_idx] = torch.tensor(
-                        [1, 1, img_tensor.shape[-1]], dtype=torch.long
-                    )
+            for i in range(batch_size):
+                n_patches = batch_pixel_values[i].shape[0]
+                n_images = batch_image_grid[i].shape[0]
+                pixel_values[i, :n_patches] = batch_pixel_values[i].to(device)
+                image_grid_thw[i, :n_images] = batch_image_grid[i].to(device)
 
             return pixel_values, image_grid_thw
 

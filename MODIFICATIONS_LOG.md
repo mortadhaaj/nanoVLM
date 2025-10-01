@@ -352,3 +352,73 @@
 - ✅ Save Load Methods
 - ✅ Tokenizer Compatibility
 - ✅ Train Config Compatibility
+
+---
+
+### Integration Test Run - 2025-10-01 04:26:13
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ⚠️ 6/8 Passed
+
+**Test Results**:
+- ✅ Config Compatibility
+- ✅ Forward Signature
+- ❌ Forward Pass Training
+  - Error: `too many values to unpack (expected 5)`
+- ✅ Generate Method
+- ❌ Backward Pass
+  - Error: `too many values to unpack (expected 5)`
+- ✅ Save Load Methods
+- ✅ Tokenizer Compatibility
+- ✅ Train Config Compatibility
+
+---
+
+### Integration Test Run - 2025-10-01 04:28:55
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ✅ All Passed
+
+**Test Results**:
+- ✅ Config Compatibility
+- ✅ Forward Signature
+- ✅ Forward Pass Training
+- ✅ Generate Method
+- ✅ Backward Pass
+- ✅ Save Load Methods
+- ✅ Tokenizer Compatibility
+- ✅ Train Config Compatibility
+
+---
+
+### Integration Test Run - 2025-10-01 04:32:28
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ✅ All Passed
+
+**Test Results**:
+- ✅ Config Compatibility
+- ✅ Forward Signature
+- ✅ Forward Pass Training
+- ✅ Generate Method
+- ✅ Backward Pass
+- ✅ Save Load Methods
+- ✅ Tokenizer Compatibility
+- ✅ Train Config Compatibility
+
+---
+
+### Integration Test Run - 2025-10-01 04:45:15
+- **Device**: cuda
+- **PyTorch**: 2.8.0+cu128
+- **Status**: ✅ All Passed
+
+**Test Results**:
+- ✅ Config Compatibility
+- ✅ Forward Signature
+- ✅ Forward Pass Training
+- ✅ Generate Method
+- ✅ Backward Pass
+- ✅ Save Load Methods
+- ✅ Tokenizer Compatibility
+- ✅ Train Config Compatibility
