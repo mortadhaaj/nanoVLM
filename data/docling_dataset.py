@@ -42,6 +42,7 @@ class DoclingDataset(Dataset):
         image_processor=None,
         mp_image_token_length: int = 64,
         max_turns: int = None,  # Limit number of QA turns per sample
+        max_images_per_sample: int = None,  # Limit images per sample to save memory
     ):
         """
         Args:
@@ -51,6 +52,7 @@ class DoclingDataset(Dataset):
             image_processor: Image processor for vision encoder
             mp_image_token_length: Number of tokens per image (64 for nanoVLM)
             max_turns: Maximum QA turns to include (None = all)
+            max_images_per_sample: Maximum images per sample (None = all, use 1-2 to save memory)
         """
         self.data_root = Path(data_root)
         self.split = split
@@ -58,6 +60,7 @@ class DoclingDataset(Dataset):
         self.image_processor = image_processor
         self.mp_image_token_length = mp_image_token_length
         self.max_turns = max_turns
+        self.max_images_per_sample = max_images_per_sample
 
         # Load annotation files
         self.ann_dir = self.data_root / "anns" / split
@@ -112,6 +115,10 @@ class DoclingDataset(Dataset):
         if isinstance(img_paths, str):
             # Single image (SynthFormulaNet format)
             img_paths = [img_paths]
+
+        # Limit images per sample if specified (to save memory)
+        if self.max_images_per_sample is not None and len(img_paths) > self.max_images_per_sample:
+            img_paths = img_paths[:self.max_images_per_sample]
 
         # Process images
         images = self._load_images(img_paths)
@@ -184,6 +191,7 @@ class DoclingDataset(Dataset):
 
         # Limit number of turns if specified
         turns = anns[:self.max_turns] if self.max_turns else anns
+        turns = anns[-1:] if self.max_turns else anns
 
         for idx, turn in enumerate(turns):
             user_content = turn['user']
