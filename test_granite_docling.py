@@ -9,12 +9,63 @@ Tests:
 """
 
 import torch
-from PIL import Image
+import re
+from PIL import Image, ImageDraw
+from pathlib import Path
 from models.granite_docling_vlm import GraniteDoclingVLM, GraniteDoclingConfig
 
 # Checkpoint and image paths
-CHECKPOINT_PATH = "../.cache/hub/models--ibm-granite--granite-docling-258M/snapshots/982fe3b40f2fa73c365bdb1bcacf6c81b7184bfe/"
+CHECKPOINT_PATH = "./checkpoints/granite_docling_finetuned/checkpoint_batch_3000"
+TEST_IMAGE_PATH = "../DoclingMatix_00000/images/train/00000_200_0.png"
+# TEST_IMAGE_PATH = "../SynthFormulaNet_00000/images/train/00000_1090.png"
+
+# # Checkpoint and image paths
+# CHECKPOINT_PATH = "../.cache/hub/models--ibm-granite--granite-docling-258M/snapshots/982fe3b40f2fa73c365bdb1bcacf6c81b7184bfe/"
 TEST_IMAGE_PATH = "assets/input.png"
+
+
+def draw_bounding_boxes(image_path: str, response_text: str, is_doctag_response: bool = False) -> Image.Image:
+    """Draw bounding boxes on the image based on loc tags and return the annotated image."""
+    try:
+        image = Image.open(image_path).convert("RGB")
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+
+        class_colors = {
+            "caption": "#FFCC99", "footnote": "#C8C8FF", "formula": "#C0C0C0",
+            "list_item": "#9999FF", "page_footer": "#CCFFCC", "page_header": "#CCFFCC",
+            "picture": "#FFCCA4", "chart": "#FFCCA4", "section_header": "#FF9999",
+            "table": "#FFCCCC", "text": "#FFFF99", "title": "#FF9999",
+        }
+
+        doctag_class_pattern = r"<([^>]+)><loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)>[^<]*</[^>]+>"
+        doctag_matches = re.findall(doctag_class_pattern, response_text)
+        class_pattern = r"<([^>]+)><loc_(\d+)><loc_(\d+)><loc_(\d+)><loc_(\d+)>"
+        class_matches = re.findall(class_pattern, response_text)
+
+        seen_coords = set()
+        all_class_matches = []
+        for match in doctag_matches:
+            coords = (match[1], match[2], match[3], match[4])
+            if coords not in seen_coords:
+                seen_coords.add(coords)
+                all_class_matches.append(match)
+        for match in class_matches:
+            coords = (match[1], match[2], match[3], match[4])
+            if coords not in seen_coords:
+                seen_coords.add(coords)
+                all_class_matches.append(match)
+
+        for class_name, xmin, ymin, xmax, ymax in all_class_matches:
+            color = class_colors.get(class_name.lower(), "#808080") if is_doctag_response else "#E0115F"
+            x1, y1 = int((int(xmin) / 500) * width), int((int(ymin) / 500) * height)
+            x2, y2 = int((int(xmax) / 500) * width), int((int(ymax) / 500) * height)
+            draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+
+        return image
+    except Exception:
+        return Image.open(image_path)
+
 
 def test_model_loading():
     """Test loading model from HF checkpoint"""
@@ -153,7 +204,8 @@ def test_generation_with_real_image(model):
         print(f"   Image size: {image.size}")
 
         # Prepare prompt
-        question = "Convert this page to docling."
+        question = "Convert this page to docling." # "<formula>"
+        # question = "<formula>"
         messages = [
             {
                 "role": "user",
@@ -193,7 +245,26 @@ def test_generation_with_real_image(model):
         print(f"✅ Generation successful")
         print(f"   Question: {question}")
         print(f"   Generated tokens: {generated.shape[1]}")
-        print(f"   Response: {generated_text}...")
+        print(f"   Response: {generated_text[:]}...")
+
+        # Extract assistant response (after last <|start_of_role|>assistant<|end_of_role|>)
+        if "<|start_of_role|>assistant<|end_of_role|>" in generated_text:
+            response = generated_text.split("<|start_of_role|>assistant<|end_of_role|>")[-1]
+            response = response.split("<|end_of_text|>")[0] if "<|end_of_text|>" in response else response
+        else:
+            response = generated_text
+
+        # Save annotated image with bounding boxes
+        has_doctag = "<doctag>" in response.lower()
+        annotated_image = draw_bounding_boxes(TEST_IMAGE_PATH, response, is_doctag_response=has_doctag)
+
+        # Create assets directory if needed
+        assets_dir = Path("assets")
+        assets_dir.mkdir(exist_ok=True)
+
+        output_path = assets_dir / "annotated_output.png"
+        annotated_image.save(str(output_path))
+        print(f"   📸 Saved annotated image to: {output_path}")
 
         return True
 

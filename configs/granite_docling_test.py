@@ -32,22 +32,23 @@ def get_config():
 
         # Training configuration - FAST settings for testing
         'training': {
-            'num_epochs': 3,          # Just 1 epoch for testing
+            'num_epochs': 60,          # Just 1 epoch for testing
             'batch_size': 1,
             'gradient_accumulation_steps': 4,  # Effective batch size = 1 * 4 = 4
             'val_ratio': 0.1,         # 10% for validation
 
             # Learning rates
-            'lr_vision': 5e-5,
-            'lr_text': 5e-5,
+            'lr_vision': 5e-4,
+            'lr_text': 5e-4,
             'lr_connector': 5e-4,
 
             'weight_decay': 0.01,
             'max_grad_norm': 1.0,
             'min_lr': 1e-6,
 
-            # Memory optimization
+            # Memory and speed optimization
             'gradient_checkpointing': True,
+            'mixed_precision': 'bf16',  # 'bf16' (recommended for H100) or 'fp16' or None
 
             # Data loading
             'num_workers': 2,  # Fewer workers for testing
@@ -56,6 +57,8 @@ def get_config():
             'log_interval': 5,       # Log more frequently
             'val_interval': 1,
             'save_interval': 1,
+            'save_steps': None,      # Save checkpoint every N steps (None = disabled)
+            'max_checkpoints': 5,    # Keep only 3 most recent checkpoints
             'save_dir': './checkpoints/granite_docling_test',
         },
 

@@ -43,6 +43,7 @@ class DoclingDataset(Dataset):
         mp_image_token_length: int = 64,
         max_turns: int = None,  # Limit number of QA turns per sample
         max_images_per_sample: int = None,  # Limit images per sample to save memory
+        processor=None,  # Full processor (tokenizer + image_processor)
     ):
         """
         Args:
@@ -53,11 +54,13 @@ class DoclingDataset(Dataset):
             mp_image_token_length: Number of tokens per image (64 for nanoVLM)
             max_turns: Maximum QA turns to include (None = all)
             max_images_per_sample: Maximum images per sample (None = all, use 1-2 to save memory)
+            processor: Full processor (for structured content format)
         """
         self.data_root = Path(data_root)
         self.split = split
         self.tokenizer = tokenizer
         self.image_processor = image_processor
+        self.processor = processor
         self.mp_image_token_length = mp_image_token_length
         self.max_turns = max_turns
         self.max_images_per_sample = max_images_per_sample
@@ -135,22 +138,29 @@ class DoclingDataset(Dataset):
         if len(messages) == 0:
             return None
 
-        # Prepare inputs and labels
-        input_ids, mask, attention_mask = self._prepare_inputs_and_loss_mask(messages)
+        # Prepare inputs and labels - pass images for proper formatting
+        # Returns processed_data which may include pixel_values if processor was used
+        input_ids, mask, attention_mask, processed_data = self._prepare_inputs_and_loss_mask(messages, images)
         labels = self._get_labels(input_ids, mask)
 
-        # For Granite Docling: Keep images as PIL (processor will be called in collator)
-        # For nanoVLM: Process images here
-        if self.image_processor and self.image_processor.__class__.__name__ != 'Idefics3ImageProcessor':
-            # nanoVLM-style processing
-            images = self._process_images(images) if images else []
-
-        return {
-            "images": images,  # PIL images for Granite, processed tensors for nanoVLM
+        # If processor was used, it already processed images - use those pixel_values
+        # Otherwise, keep images as PIL (for non-Granite models)
+        result = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "labels": labels,
         }
+
+        if processed_data is not None and 'pixel_values' in processed_data:
+            # Processor was used - return processed pixel_values
+            result['pixel_values'] = processed_data['pixel_values'][0]  # Remove batch dim
+            if 'image_grid_thw' in processed_data:
+                result['image_grid_thw'] = processed_data['image_grid_thw'][0]  # Remove batch dim
+        else:
+            # No processor or fallback - return PIL images
+            result['images'] = images
+
+        return result
 
     def _load_images(self, img_paths: List[str]) -> List[Image.Image]:
         """Load images from paths"""
@@ -197,55 +207,105 @@ class DoclingDataset(Dataset):
             user_content = turn['user']
             assistant_content = turn['assistant']
 
-            # For first turn, prepend image tokens
+            # For first turn, use structured content format with image placeholders
             if idx == 0 and num_images > 0:
-                # Add <image> tokens for each image
-                image_tokens = "<image>" * num_images
-                user_content = image_tokens + user_content
+                # Use structured content (processor will handle image grid formatting)
+                content = [{"type": "image"}] * num_images + [{"type": "text", "text": user_content}]
+                messages.append({"role": "user", "content": content})
+            else:
+                messages.append({"role": "user", "content": user_content})
 
-            messages.append({"role": "user", "content": user_content})
             messages.append({"role": "assistant", "content": assistant_content})
 
         return messages
 
-    def _prepare_inputs_and_loss_mask(self, messages: List[Dict]) -> tuple:
+    def _prepare_inputs_and_loss_mask(self, messages: List[Dict], images: List) -> tuple:
         """
         Apply chat template and create loss mask.
 
+        Args:
+            messages: Chat messages (may contain structured content)
+            images: PIL images
+
         Returns:
-            (input_ids, mask, attention_mask)
+            (input_ids, mask, attention_mask, processed_data)
+            - input_ids: Token IDs
             - mask: True for assistant tokens (compute loss), False for others
+            - attention_mask: Attention mask
+            - processed_data: Full processor output (includes pixel_values if processor used)
         """
-        # Apply chat template
-        conv_ids = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_special_tokens=False,
-            return_dict=True,
-        )
+        processed_data = None
+
+        # If using processor with images, apply full processing pipeline
+        if self.processor and images:
+            # Step 1: Apply chat template to get text with <image> placeholders
+            prompt = self.processor.apply_chat_template(messages, add_generation_prompt=False)
+            # Step 2: Process with images to get proper grid formatting
+            processed = self.processor(text=prompt, images=images, return_tensors="pt", add_special_tokens=False)
+            conv_ids = {
+                "input_ids": processed["input_ids"][0].tolist(),
+                "attention_mask": processed["attention_mask"][0].tolist()
+            }
+            processed_data = processed  # Save for pixel_values
+        else:
+            # Fallback to tokenizer only
+            conv_ids = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_special_tokens=False,
+                return_dict=True,
+            )
 
         # Create loss mask (1 for assistant tokens only)
         mask = [0] * len(conv_ids["input_ids"])
 
-        # Locate each assistant turn and flip its mask to 1
-        cursor = 0
-        for msg in messages:
-            segment_ids = self.tokenizer.apply_chat_template(
-                [msg], tokenize=True, add_special_tokens=False
-            )
-            seg_len = len(segment_ids)
+        if self.processor and processed_data:
+            # When using processor, find assistant tokens by looking for the pattern
+            # We need to find where "<|start_of_role|>assistant<|end_of_role|>" appears
+            input_ids_list = conv_ids["input_ids"]
 
-            if msg["role"] == "assistant":
-                start = cursor + self.prefix_len
-                end = cursor + seg_len
-                mask[start:end] = [1] * (end - start)
+            # Tokenize the assistant role markers
+            assistant_start = self.tokenizer.encode("<|start_of_role|>assistant<|end_of_role|>", add_special_tokens=False)
+            eos_token = self.tokenizer.eos_token_id
 
-            cursor += seg_len
+            # Find all assistant turn positions
+            i = 0
+            while i < len(input_ids_list):
+                # Check if we found assistant role marker
+                if i + len(assistant_start) <= len(input_ids_list):
+                    if input_ids_list[i:i+len(assistant_start)] == assistant_start:
+                        # Found assistant turn, mark from after the role marker to next EOS
+                        start = i + len(assistant_start)
+                        # Find next EOS token
+                        end = start
+                        while end < len(input_ids_list) and input_ids_list[end] != eos_token:
+                            end += 1
+                        # Mark these tokens for loss calculation
+                        mask[start:end] = [1] * (end - start)
+                        i = end
+                        continue
+                i += 1
+        else:
+            # Fallback: manual cursor tracking for non-processor case
+            cursor = 0
+            for msg in messages:
+                segment_ids = self.tokenizer.apply_chat_template(
+                    [msg], tokenize=True, add_special_tokens=False
+                )
+                seg_len = len(segment_ids)
+
+                if msg["role"] == "assistant":
+                    start = cursor + self.prefix_len
+                    end = cursor + seg_len
+                    mask[start:end] = [1] * (end - start)
+
+                cursor += seg_len
 
         return (
             torch.tensor(conv_ids["input_ids"]),
             torch.tensor(mask).to(torch.bool),
-            torch.tensor(conv_ids["attention_mask"])
+            torch.tensor(conv_ids["attention_mask"]),
+            processed_data
         )
 
     def _get_labels(self, input_ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -360,8 +420,12 @@ def docling_collate_fn(batch, image_processor=None):
     attention_mask = torch.zeros((batch_size, max_seq_len), dtype=torch.long)
     labels = torch.full((batch_size, max_seq_len), -100, dtype=torch.long)
 
-    # Collect images (nested list format for multi-image support)
-    images = []
+    # Check if samples already have processed pixel_values
+    has_pixel_values = 'pixel_values' in batch[0]
+
+    # Collect pixel_values or PIL images
+    pixel_values_list = []
+    image_grid_thw_list = []
 
     for i, item in enumerate(batch):
         seq_len = item['input_ids'].shape[0]
@@ -369,50 +433,41 @@ def docling_collate_fn(batch, image_processor=None):
         attention_mask[i, :seq_len] = item['attention_mask']
         labels[i, :seq_len] = item['labels']
 
-        sample_images = item['images']
+        if has_pixel_values:
+            # Already processed by dataset
+            pixel_values_list.append(item['pixel_values'])
+            if 'image_grid_thw' in item:
+                image_grid_thw_list.append(item['image_grid_thw'])
 
-        # Check if images are PIL or already processed
-        if sample_images and len(sample_images) > 0:
-            from PIL import Image
-            if isinstance(sample_images[0], Image.Image):
-                # PIL images - keep as PIL for now (will process all at batch level)
-                images.append(sample_images)
-            else:
-                # Already processed tensors (nanoVLM)
-                images.append(sample_images)
-        else:
-            images.append([])
+    # If samples already have pixel_values, concatenate them
+    if has_pixel_values and len(pixel_values_list) > 0:
+        # Concatenate pixel_values from all samples
+        # Each sample may have different number of images
+        # For Idefics3: pixel_values shape is [total_num_images, num_channels, height, width]
+        # We concatenate all images from all samples together
+        pixel_values = torch.cat(pixel_values_list, dim=0)  # Concatenate along image dimension
 
-    # For Granite Docling with PIL images: process entire batch at once
-    if images and len(images) > 0:
-        from PIL import Image
-        if isinstance(images[0][0] if images[0] else None, Image.Image):
-            if image_processor is None:
-                raise ValueError("image_processor required for PIL images")
+        # Add batch dimension to get [batch_size=1, total_num_images, C, H, W]
+        # Note: Idefics3 expects batch_size dimension even though we process samples independently
+        pixel_values = pixel_values.unsqueeze(0)
 
-            # Flatten all PIL images to process as batch
-            all_pil_images = []
-            image_sample_mapping = []  # Track which sample each image belongs to
-            for sample_idx, sample_imgs in enumerate(images):
-                for img in sample_imgs:
-                    all_pil_images.append(img)
-                    image_sample_mapping.append(sample_idx)
+        result = {
+            'pixel_values': pixel_values,
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'labels': labels,
+        }
 
-            if len(all_pil_images) > 0:
-                # Process all images at once using Idefics3ImageProcessor
-                proc_output = image_processor(images=all_pil_images, return_tensors="pt")
+        if len(image_grid_thw_list) > 0:
+            # Concatenate grid info from all samples
+            image_grid_thw = torch.cat(image_grid_thw_list, dim=0)
+            image_grid_thw = image_grid_thw.unsqueeze(0)  # Add batch dimension
+            result['image_grid_thw'] = image_grid_thw
 
-                # For Idefics3, return processor outputs directly
-                return {
-                    'pixel_values': proc_output['pixel_values'],  # [total_images, num_patches, C, H, W]
-                    'image_grid_thw': proc_output.get('image_grid_thw', None),
-                    'input_ids': input_ids,
-                    'attention_mask': attention_mask,
-                    'labels': labels,
-                }
+        return result
 
+    # Fallback: if no pixel_values (shouldn't happen with Granite + processor)
     return {
-        'images': images,
         'input_ids': input_ids,
         'attention_mask': attention_mask,
         'labels': labels,

@@ -28,6 +28,7 @@ def get_config():
                 'max_samples': None,  # 90K samples - set to smaller number for testing
                 'max_images_per_sample': None  # Use all images
             },
+
             # Add more datasets here:
             # {
             #     'name': 'MyCustomDataset',
@@ -39,9 +40,9 @@ def get_config():
 
         # Training configuration
         'training': {
-            'num_epochs': 3,
-            'batch_size': 3,  # Per-device batch size
-            'gradient_accumulation_steps': 8,  # Effective batch size = 1 * 8 = 8 (or 64 with 8 GPUs)
+            'num_epochs': 2,
+            'batch_size': 2,  # Per-device batch size
+            'gradient_accumulation_steps': 8,  # Effective batch size = 3 * 8 = 24 (or 192 with 8 GPUs)
             'val_ratio': 0.05,  # 5% for validation
 
             # Learning rates (different for each component)
@@ -53,8 +54,9 @@ def get_config():
             'max_grad_norm': 1.0,
             'min_lr': 1e-6,
 
-            # Memory optimization
+            # Memory and speed optimization
             'gradient_checkpointing': True,
+            'mixed_precision': 'bf16',  # 'bf16' (recommended for H100) or 'fp16' or None
 
             # Data loading
             'num_workers': 8,
@@ -63,6 +65,8 @@ def get_config():
             'log_interval': 10,      # Log every N batches
             'val_interval': 1,       # Validate every N epochs
             'save_interval': 1,      # Save checkpoint every N epochs
+            'save_steps': 1000,      # Save checkpoint every N steps (None = disabled, e.g., 1000)
+            'max_checkpoints': 5, # Keep only N most recent checkpoints (None = keep all)
             'save_dir': './checkpoints/granite_docling_finetuned',
         },
 

@@ -108,14 +108,17 @@ def get_config():
     'max_grad_norm': 1.0,               # Gradient clipping
     'min_lr': 1e-6,                     # Minimum LR for scheduler
 
-    # Memory optimization
+    # Memory and speed optimization
     'gradient_checkpointing': True,     # Trade compute for memory
+    'mixed_precision': 'bf16',          # 'bf16' (H100), 'fp16', or None
 
     'num_workers': 4,                   # Data loading workers
 
     'log_interval': 10,                 # Log every N batches
     'val_interval': 1,                  # Validate every N epochs
-    'save_interval': 1,                 # Save every N epochs
+    'save_interval': 1,                 # Save checkpoint every N epochs
+    'save_steps': None,                 # Save checkpoint every N steps (None = disabled)
+    'max_checkpoints': None,            # Keep only N most recent checkpoints (None = keep all)
     'save_dir': './checkpoints/...',    # Where to save checkpoints
 }
 ```
@@ -130,6 +133,20 @@ def get_config():
 - Example: batch_size=1, accumulation=8, 8 GPUs → effective batch = 64
 - Allows large effective batch sizes without OOM
 - Slower per-step but same convergence
+
+**Mixed Precision Training:**
+- `bf16`: BFloat16 - Recommended for H100/A100 GPUs, better numerical stability
+- `fp16`: Float16 - Good for older GPUs (V100), requires loss scaling
+- `None`: Full FP32 precision (slower, more memory)
+- Benefits: ~2x faster training, ~40% memory reduction
+
+**Checkpoint Saving:**
+- `save_interval`: Save every N **epochs** (e.g., `save_interval: 1` = save after each epoch)
+- `save_steps`: Save every N **optimization steps** (e.g., `save_steps: 1000` = save every 1000 steps)
+- `max_checkpoints`: Keep only N most recent checkpoints (e.g., `max_checkpoints: 5` = keep last 5)
+- Use `save_steps` for long epochs or to checkpoint more frequently
+- Checkpoints saved as `checkpoint_epoch_N` or `checkpoint_step_N`
+- All options can be combined (auto-deletes oldest checkpoints when limit reached)
 
 #### Weights & Biases (Optional)
 

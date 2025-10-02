@@ -10,6 +10,9 @@ Usage:
 """
 
 import os
+# Disable tokenizer parallelism warning when using multiprocessing
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
 import sys
 import argparse
 import importlib.util
@@ -24,6 +27,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, ConcatDataset
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.cuda.amp import autocast, GradScaler
 import wandb
 
 from models.granite_docling_vlm import GraniteDoclingVLM
@@ -76,6 +80,7 @@ def create_datasets(config, model):
             split='train',
             tokenizer=model.tokenizer,
             image_processor=model.image_processor,
+            processor=model.processor if hasattr(model, 'processor') else None,
             mp_image_token_length=64,
             max_turns=dataset_config.get('max_turns', None),
             max_images_per_sample=dataset_config.get('max_images_per_sample', None)
@@ -190,7 +195,7 @@ def setup_optimizer_and_scheduler(model, config, total_steps):
     return optimizer, scheduler
 
 
-def train_epoch(model, train_loader, optimizer, scheduler, epoch, config, rank, device, start_time):
+def train_epoch(model, train_loader, optimizer, scheduler, epoch, config, rank, device, start_time, scaler=None, global_step=0):
     """Train for one epoch"""
     model.train()
     total_loss = 0
@@ -199,6 +204,10 @@ def train_epoch(model, train_loader, optimizer, scheduler, epoch, config, rank, 
     # Gradient accumulation settings
     gradient_accumulation_steps = config['training'].get('gradient_accumulation_steps', 1)
     accumulation_counter = 0
+
+    # Mixed precision settings
+    use_amp = config['training'].get('mixed_precision', None) in ['fp16', 'bf16']
+    amp_dtype = torch.bfloat16 if config['training'].get('mixed_precision') == 'bf16' else torch.float16
 
     for batch_idx, batch in enumerate(train_loader):
         # Move batch to device
@@ -212,20 +221,34 @@ def train_epoch(model, train_loader, optimizer, scheduler, epoch, config, rank, 
             attention_mask = attention_mask.to(device)
         labels = batch['labels'].to(device)
 
-        # Forward pass
-        logits, loss = model(
-            input_ids=input_ids,
-            pixel_values=pixel_values,
-            image_grid_thw=image_grid_thw,
-            attention_mask=attention_mask,
-            targets=labels
-        )
-
-        # Scale loss by accumulation steps
-        loss = loss / gradient_accumulation_steps
+        # Forward pass with mixed precision
+        if use_amp and scaler is not None:
+            with autocast(device_type='cuda', dtype=amp_dtype):
+                logits, loss = model(
+                    input_ids=input_ids,
+                    pixel_values=pixel_values,
+                    image_grid_thw=image_grid_thw,
+                    attention_mask=attention_mask,
+                    targets=labels
+                )
+                # Scale loss by accumulation steps
+                loss = loss / gradient_accumulation_steps
+        else:
+            logits, loss = model(
+                input_ids=input_ids,
+                pixel_values=pixel_values,
+                image_grid_thw=image_grid_thw,
+                attention_mask=attention_mask,
+                targets=labels
+            )
+            # Scale loss by accumulation steps
+            loss = loss / gradient_accumulation_steps
 
         # Backward pass
-        loss.backward()
+        if use_amp and scaler is not None:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
 
         accumulation_counter += 1
 
@@ -233,17 +256,33 @@ def train_epoch(model, train_loader, optimizer, scheduler, epoch, config, rank, 
         if accumulation_counter % gradient_accumulation_steps == 0:
             # Gradient clipping
             if config['training'].get('max_grad_norm', 0) > 0:
+                if use_amp and scaler is not None:
+                    scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(),
                     config['training']['max_grad_norm']
                 )
 
-            optimizer.step()
+            # Optimizer step
+            if use_amp and scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+
             scheduler.step()
             optimizer.zero_grad()
 
+            # Increment global step counter after weight update
+            global_step += 1
+
         total_loss += loss.item() * gradient_accumulation_steps  # Undo scaling for logging
         num_batches += 1
+
+        # Batch-based checkpoint saving (after every batch, not optimization step)
+        save_steps = config['training'].get('save_steps', None)
+        if save_steps is not None and num_batches % save_steps == 0:
+            save_checkpoint(model, optimizer, scheduler, f"batch_{num_batches}", config, rank, scaler)
 
         # Logging
         if is_master(rank) and batch_idx % config['training'].get('log_interval', 10) == 0:
@@ -272,7 +311,7 @@ def train_epoch(model, train_loader, optimizer, scheduler, epoch, config, rank, 
                     'train/elapsed_time': elapsed
                 })
 
-    return total_loss / num_batches if num_batches > 0 else 0
+    return total_loss / num_batches if num_batches > 0 else 0, global_step
 
 
 def validate(model, val_loader, epoch, config, rank, device, start_time):
@@ -326,8 +365,8 @@ def validate(model, val_loader, epoch, config, rank, device, start_time):
     return avg_loss
 
 
-def save_checkpoint(model, optimizer, scheduler, epoch, config, rank):
-    """Save model checkpoint"""
+def save_checkpoint(model, optimizer, scheduler, epoch, config, rank, scaler=None):
+    """Save model checkpoint and manage checkpoint rotation"""
     if not is_master(rank):
         return
 
@@ -337,17 +376,48 @@ def save_checkpoint(model, optimizer, scheduler, epoch, config, rank):
     # Unwrap DDP if needed
     model_to_save = model.module if hasattr(model, 'module') else model
 
-    checkpoint_path = save_dir / f"checkpoint_epoch_{epoch}"
+    checkpoint_path = save_dir / f"checkpoint_{epoch}"
 
     print(f"Saving checkpoint to {checkpoint_path}")
     model_to_save.save_pretrained(str(checkpoint_path))
 
+    # Save processor (tokenizer + image processor)
+    if hasattr(model_to_save, 'processor') and model_to_save.processor is not None:
+        model_to_save.processor.save_pretrained(str(checkpoint_path))
+    elif hasattr(model_to_save, 'tokenizer') and hasattr(model_to_save, 'image_processor'):
+        if model_to_save.tokenizer is not None:
+            model_to_save.tokenizer.save_pretrained(str(checkpoint_path))
+        if model_to_save.image_processor is not None:
+            model_to_save.image_processor.save_pretrained(str(checkpoint_path))
+
     # Save training state
-    torch.save({
+    training_state = {
         'epoch': epoch,
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),
-    }, checkpoint_path / "training_state.pt")
+    }
+
+    # Save scaler state if using mixed precision
+    if scaler is not None:
+        training_state['scaler_state_dict'] = scaler.state_dict()
+
+    torch.save(training_state, checkpoint_path / "training_state.pt")
+
+    # Manage checkpoint rotation (keep only N most recent)
+    max_checkpoints = config['training'].get('max_checkpoints', None)
+    if max_checkpoints is not None and max_checkpoints > 0:
+        # Get all checkpoint directories (both epoch and step based)
+        all_checkpoints = [d for d in save_dir.iterdir() if d.is_dir() and d.name.startswith('checkpoint_')]
+
+        # Sort by modification time (oldest first)
+        all_checkpoints.sort(key=lambda x: x.stat().st_mtime)
+
+        # Remove old checkpoints if we exceed the limit
+        while len(all_checkpoints) > max_checkpoints:
+            old_checkpoint = all_checkpoints.pop(0)
+            print(f"Removing old checkpoint: {old_checkpoint.name}")
+            import shutil
+            shutil.rmtree(old_checkpoint)
 
 
 def main():
@@ -404,8 +474,19 @@ def main():
     )
 
     # Setup optimizer and scheduler
-    total_steps = config['training']['num_epochs'] * len(train_loader)
+    gradient_accumulation_steps = config['training'].get('gradient_accumulation_steps', 1)
+    total_steps = config['training']['num_epochs'] * len(train_loader) // gradient_accumulation_steps
     optimizer, scheduler = setup_optimizer_and_scheduler(model, config, total_steps)
+
+    # Setup mixed precision training
+    scaler = None
+    mixed_precision = config['training'].get('mixed_precision', None)
+    if mixed_precision in ['fp16', 'bf16']:
+        if is_master(rank):
+            precision_name = 'BF16' if mixed_precision == 'bf16' else 'FP16'
+            print(f"Enabling {precision_name} mixed precision training...")
+        if mixed_precision == 'fp16':
+            scaler = GradScaler()
 
     # Resume from checkpoint if needed
     start_epoch = 0
@@ -415,6 +496,8 @@ def main():
             state = torch.load(training_state_path)
             optimizer.load_state_dict(state['optimizer_state_dict'])
             scheduler.load_state_dict(state['scheduler_state_dict'])
+            if scaler is not None and 'scaler_state_dict' in state:
+                scaler.load_state_dict(state['scaler_state_dict'])
             start_epoch = state['epoch'] + 1
             if is_master(rank):
                 print(f"Resuming from epoch {start_epoch}")
@@ -426,21 +509,24 @@ def main():
     # Start timer
     start_time = time.time()
 
+    # Track global step across epochs
+    global_step = 0
+
     for epoch in range(start_epoch, config['training']['num_epochs']):
         # Set epoch for distributed sampler
         if world_size > 1:
             train_loader.sampler.set_epoch(epoch)
 
         # Train
-        train_loss = train_epoch(model, train_loader, optimizer, scheduler, epoch, config, rank, device, start_time)
+        train_loss, global_step = train_epoch(model, train_loader, optimizer, scheduler, epoch, config, rank, device, start_time, scaler, global_step)
 
         # Validate
         if (epoch + 1) % config['training'].get('val_interval', 1) == 0:
             val_loss = validate(model, val_loader, epoch, config, rank, device, start_time)
 
-        # Save checkpoint
+        # Epoch-based checkpoint saving
         if (epoch + 1) % config['training'].get('save_interval', 1) == 0:
-            save_checkpoint(model, optimizer, scheduler, epoch, config, rank)
+            save_checkpoint(model, optimizer, scheduler, epoch, config, rank, scaler)
 
     # Final save
     if is_master(rank):
